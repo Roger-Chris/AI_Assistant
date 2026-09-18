@@ -9,6 +9,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlmodel import Session, select
 
 from .classifier import classify_pending, touch
+from . import gcal
 from .config import settings
 from .db import Message, Task, TaskStatus, engine
 from .llm import LLM, planner_profile
@@ -19,6 +20,9 @@ scheduler = AsyncIOScheduler(timezone=settings.tz)
 
 BRIEF_PROMPT = """You are {owner}'s personal assistant writing the morning brief.
 Today is {today} ({tz}). Below are their open tasks/events (unconfirmed ones were auto-extracted from chats and not yet accepted).
+
+CALENDAR (next 36 hours, all calendars; "[assistant]" = mirrored from the tasks below):
+{calendar}
 
 Write a brief in plain text (no markdown headers), under 150 words:
 1. What matters today, in priority order, with times.
@@ -44,8 +48,16 @@ async def daily_brief() -> None:
             .order_by(Task.due_at.is_(None), Task.due_at)  # type: ignore[attr-defined]
         ).all()
         tz = ZoneInfo(settings.tz)
+        try:
+            cal = gcal.upcoming(session)
+        except Exception as e:  # noqa: BLE001
+            log.warning("calendar unavailable for brief: %s", e)
+            cal = []
+        cal_text = "\n".join(
+            f"- {e['start']} {e['title']} ({e['calendar']}){' [assistant]' if e['assistant'] else ''}" for e in cal
+        ) or "(nothing, or Google not connected)"
         prompt = BRIEF_PROMPT.format(owner=settings.owner_name, today=datetime.now(tz).strftime("%A %d %B %Y"),
-                                     tz=settings.tz, tasks=_dump(tasks))
+                                     tz=settings.tz, tasks=_dump(tasks), calendar=cal_text)
         try:
             text = await LLM(planner_profile()).complete([{"role": "user", "content": prompt}], max_tokens=400)
         except Exception as e:  # noqa: BLE001 — fall back to a plain list rather than silence
@@ -77,6 +89,7 @@ def start() -> None:
     scheduler.add_job(overdue_nudge, "cron", hour=18, minute=0, id="overdue")
     scheduler.add_job(catch_up, "interval", minutes=10, id="catch_up")
     scheduler.add_job(unanswered_sweep, "interval", minutes=5, id="unanswered")
+    scheduler.add_job(calendar_sync, "interval", minutes=2, id="calendar")
     scheduler.start()
 
 
@@ -105,3 +118,11 @@ async def unanswered_sweep() -> None:
             touch(t)
             session.add(t)
         session.commit()
+
+
+async def calendar_sync() -> None:
+    with Session(engine) as session:
+        try:
+            gcal.sync_dirty(session)
+        except Exception:  # noqa: BLE001
+            log.exception("calendar sync failed")

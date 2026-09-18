@@ -65,6 +65,8 @@ class Task(SQLModel, table=True):
     confidence: float = 0.0
     source_message_id: Optional[int] = Field(default=None, foreign_key="message.id")
     chat_id: Optional[str] = Field(default=None, index=True)  # which chat this came from
+    calendar_event_id: Optional[str] = None
+    calendar_synced_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
     notified: bool = False  # pushed to the phone yet?

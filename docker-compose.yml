@@ -8,6 +8,7 @@ services:
     environment:
       - DATABASE_URL=sqlite:////data/brain.db
       - MEDIA_DIR=/data/media
+      - GOOGLE_DIR=/data/google
     volumes:
       - ./data/brain:/data
     ports:

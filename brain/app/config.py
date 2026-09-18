@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     perceive_model: str = ""  # defaults to classifier_model
     perceive_max_bytes: int = 8_000_000
 
+    # google (calendar now; gmail/drive later). credentials.json + token.json live here
+    google_dir: str = "./data/google"
+    calendar_name: str = "Assistant"
+    calendar_sync_tasks_with_due: bool = True  # tasks with a due time also get a 30-min block
+
     # telegram interim remote
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
