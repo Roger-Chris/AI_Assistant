@@ -13,12 +13,14 @@ class Settings(BaseSettings):
     # cheap, high-volume model
     classifier_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
     classifier_api_key: str = ""
+    classifier_api_keys: str = ""  # comma-separated; rotated round-robin, overrides the single key
     classifier_model: str = "gemini-2.5-flash"
     classifier_min_confidence: float = 0.6
 
     # strong, low-volume model
     planner_base_url: str = "https://openrouter.ai/api/v1"
     planner_api_key: str = ""
+    planner_api_keys: str = ""
     planner_model: str = "anthropic/claude-sonnet-4"
 
     # telegram interim remote
