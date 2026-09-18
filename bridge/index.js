@@ -22,6 +22,45 @@ const HISTORY_SYNC = (process.env.HISTORY_SYNC || 'off').toLowerCase();
 
 const log = pino({ level: process.env.LOG_LEVEL || 'info' });
 const groupNames = new Map(); // jid -> subject (cached)
+const contactNames = new Map(); // pn jid -> name
+const lidToPn = new Map(); // xxx@lid -> xxx@s.whatsapp.net
+let directoryDirty = false;
+let directoryTimer = null;
+
+function resolveJid(jid) {
+  if (jid && jid.endsWith('@lid')) return lidToPn.get(jid) || jid;
+  return jid;
+}
+
+function noteContact(c) {
+  if (!c?.id) return;
+  const name = c.name || c.notify || c.verifiedName;
+  if (c.lid && c.id.endsWith('@s.whatsapp.net') && !lidToPn.has(c.lid)) { lidToPn.set(c.lid, c.id); directoryDirty = true; }
+  if (name && !contactNames.has(c.id)) { contactNames.set(c.id, name); directoryDirty = true; }
+}
+
+async function postDirectory() {
+  if (!directoryDirty) return;
+  directoryDirty = false;
+  const names = Object.fromEntries([...groupNames, ...contactNames]);
+  const aliases = Object.fromEntries(lidToPn);
+  try {
+    const res = await fetch(`${BRAIN_URL}/ingest/whatsapp/directory`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${BRAIN_TOKEN}` },
+      body: JSON.stringify({ names, aliases }),
+    });
+    const r = await res.json();
+    log.info({ names: Object.keys(names).length, aliases: Object.keys(aliases).length, merged: r.merged, renamed: r.renamed }, 'directory synced');
+  } catch (e) {
+    directoryDirty = true;
+    log.warn({ err: e.message }, 'directory sync failed; will retry');
+  }
+}
+function scheduleDirectory() {
+  clearTimeout(directoryTimer);
+  directoryTimer = setTimeout(postDirectory, 5000);
+}
 
 // ---- helpers ---------------------------------------------------------------
 
@@ -78,6 +117,8 @@ async function loadAllGroupNames(sock) {
     const all = await sock.groupFetchAllParticipating();
     for (const [jid, meta] of Object.entries(all)) if (meta?.subject) groupNames.set(jid, meta.subject);
     log.info({ groups: groupNames.size }, 'group names loaded');
+    directoryDirty = true;
+    scheduleDirectory();
   } catch (e) {
     log.warn({ err: e.message }, 'groupFetchAllParticipating failed');
   }
@@ -107,18 +148,26 @@ async function postHistory(batch) {
 async function toPayload(sock, msg, { allowFetch = true } = {}) {
   let jid = msg.key.remoteJid;
   if (!jid || jid === 'status@broadcast' || IGNORE_JIDS.has(jid)) return null;
+  if (jid.endsWith('@newsletter') || jid.endsWith('@broadcast')) return null; // channels / broadcast lists
   // WhatsApp's newer "LID" addressing: prefer the phone-number form when Baileys gives it,
   // so the same contact doesn't show up under two ids.
-  if (jid.endsWith('@lid')) jid = msg.key.remoteJidAlt || msg.key.senderPn || jid;
+  if (jid.endsWith('@lid')) {
+    const alt = msg.key.remoteJidAlt || msg.key.senderPn;
+    if (alt) { if (!lidToPn.has(jid)) { lidToPn.set(jid, alt); directoryDirty = true; } jid = alt; }
+    else jid = resolveJid(jid);
+  }
   const content = extractContent(msg);
   if (!content) return null;
   const isGroup = jid.endsWith('@g.us');
   let senderId = isGroup ? (msg.key.participant || jid) : jid;
-  if (senderId.endsWith('@lid')) senderId = msg.key.participantAlt || msg.key.senderPn || senderId;
+  if (senderId.endsWith('@lid')) senderId = msg.key.participantAlt || msg.key.senderPn || resolveJid(senderId);
+  if (msg.pushName && !msg.key.fromMe && senderId.endsWith('@s.whatsapp.net') && !contactNames.has(senderId)) {
+    contactNames.set(senderId, msg.pushName); directoryDirty = true;
+  }
   return {
     id: msg.key.id,
     chat_id: jid,
-    chat_name: isGroup ? await groupName(sock, jid, allowFetch) : (msg.pushName || null),
+    chat_name: isGroup ? await groupName(sock, jid, allowFetch) : (contactNames.get(jid) || (msg.key.fromMe ? null : msg.pushName) || null),
     sender_id: senderId,
     sender_name: msg.key.fromMe ? 'me' : (msg.pushName || null),
     from_me: !!msg.key.fromMe,
@@ -217,13 +266,22 @@ async function start() {
   };
 
   if (HISTORY_SYNC !== 'off') {
-    sock.ev.on('messaging-history.set', ({ chats, messages, isLatest, progress }) => {
-      // the bundle carries chat names — take them from here instead of asking WhatsApp per message
-      for (const c of chats || []) if (c?.id?.endsWith('@g.us') && c.name) groupNames.set(c.id, c.name);
+    sock.ev.on('messaging-history.set', ({ chats, contacts, messages, isLatest, progress }) => {
+      // the bundle carries chat + contact names and LID mappings — take them from here
+      for (const c of chats || []) {
+        if (c?.id?.endsWith('@g.us') && c.name) { groupNames.set(c.id, c.name); directoryDirty = true; }
+        else if (c?.id) noteContact({ id: c.id, name: c.name, lid: c.lidJid });
+      }
+      for (const c of contacts || []) noteContact(c);
+      scheduleDirectory();
       log.info({ count: messages.length, chats: (chats || []).length, isLatest, progress }, 'history chunk');
       queueHistory(messages);
     });
   }
+
+  sock.ev.on('contacts.upsert', (cs) => { cs.forEach(noteContact); scheduleDirectory(); });
+  sock.ev.on('contacts.update', (cs) => { cs.forEach(noteContact); scheduleDirectory(); });
+  sock.ev.on('groups.upsert', (gs) => { gs.forEach((g) => g.subject && groupNames.set(g.id, g.subject)); directoryDirty = true; scheduleDirectory(); });
 
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') {
@@ -251,6 +309,7 @@ async function start() {
         log.info({ chat: payload.chat_name || payload.chat_id, from: payload.sender_name, len: payload.text.length, media: payload.media_type }, 'msg');
         queue.push(payload);
         drain();
+        if (directoryDirty) scheduleDirectory();
       } catch (e) {
         log.error({ err: e.message }, 'failed to handle message');
       }
