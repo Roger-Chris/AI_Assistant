@@ -62,6 +62,7 @@ If action is new (or update), also fill:
 Rules:
 - Only task/event/question that concern {owner} specifically. A group message asking "someone" is fyi unless {owner} is named, is clearly responsible, or replied agreeing.
 - If from_me is true, {owner} SENT it: it's `new` only if {owner} committed to something; it's `update`/`complete` if it relates to an open task; otherwise none.
+- EXCEPTION — the SELF CHAT ("Chat: notes to self"): everything there is {owner} talking to you, the assistant. An instruction ("send me the SH files today", "remind me to pay fees") is a `task` for {owner}. A forwarded confirmation, screenshot, ticket or invite is an `event` (or task) with its date/time. Never dismiss self-chat messages as "sent to himself".
 - Do NOT create a `new` task that duplicates an OPEN TASK — use update instead.
 - confidence: 0-1 that your action+kind is right. Be honest.
 - reason: one short sentence.
@@ -102,7 +103,10 @@ def build_messages(msg: Message, ctx: list[Message], tasks: list[Task], owner: s
     tz = ZoneInfo(settings.tz)
     now = datetime.now(tz).strftime("%A %Y-%m-%d %H:%M %z")
     who = "ME" if msg.from_me else (msg.sender_name or msg.sender_id.split("@")[0])
-    chat = f"group '{msg.chat_name}'" if msg.is_group else f"direct chat with {msg.chat_name or who}"
+    if msg.is_self:
+        chat = "notes to self (the owner's own 'message yourself' chat — instructions to the assistant)"
+    else:
+        chat = f"group '{msg.chat_name}'" if msg.is_group else f"direct chat with {msg.chat_name or who}"
     user = (
         f"Chat: {chat}\n"
         f"OPEN TASKS from this chat:\n{_fmt_tasks(tasks)}\n\n"

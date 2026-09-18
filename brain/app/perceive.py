@@ -57,7 +57,9 @@ async def _gemini_native(mime: str, data: bytes, prompt: str) -> str:
                 log.error("perceive: HTTP %s: %s", r.status_code, r.text[:300])
             r.raise_for_status()
             parts = r.json()["candidates"][0]["content"]["parts"]
-            return "".join(pt.get("text", "") for pt in parts).strip()
+            out = "".join(pt.get("text", "") for pt in parts).strip()
+            log.info("perceive %s via gemini key=#%d -> %d chars", mime, idx + 1, len(out))
+            return out
     raise RuntimeError("perceive: all keys rate-limited")
 
 

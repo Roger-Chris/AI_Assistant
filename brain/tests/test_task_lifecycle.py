@@ -99,3 +99,15 @@ async def test_meme_image_is_dropped_without_model_call(client, fake_llm, monkey
                                                chat_name="Memes"))
     assert len(fake_llm.calls) == n
     _ = time
+
+
+def test_self_chat_note_becomes_task(client, fake_llm):
+    fake_llm.script["send me all the files"] = {"action": "new", "kind": "task", "title": "Send SH files",
+                                                "due_at": "2026-09-18T18:00:00+05:30", "confidence": 0.9}
+    r = client.post("/ingest/whatsapp", json=wa("[voice note] send me all the files related to SH today",
+                                                 from_me=True, is_self=True, chat_id="me@s.whatsapp.net",
+                                                 sender_id="me@s.whatsapp.net", chat_name="Me (notes to self)",
+                                                 media_type="audio"))
+    assert "skipped" not in r.json()
+    assert "notes to self" in fake_llm.calls[-1][-1]["content"]
+    assert [t for t in client.get("/tasks").json() if t["title"] == "Send SH files"]

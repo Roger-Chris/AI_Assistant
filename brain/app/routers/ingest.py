@@ -32,6 +32,7 @@ class WhatsAppMessage(BaseModel):
     sender_name: Optional[str] = None
     from_me: bool = False
     is_group: bool = False
+    is_self: bool = False
     text: str = ""
     media_type: Optional[str] = None
     media_b64: Optional[str] = None  # voice notes, if FORWARD_AUDIO is on
@@ -67,7 +68,7 @@ def _gate(session: Session, msg: Message, chat: Chat, forwarded: bool) -> Option
         return "muted-chat"
     has_open = bool(open_tasks_for_chat(session, msg.chat_id, limit=1))
     return prefilter(msg.text, is_group=msg.is_group, from_me=msg.from_me, forwarded=forwarded,
-                     media_type=msg.media_type, has_open_task=has_open)
+                     media_type=msg.media_type, has_open_task=has_open, is_self=msg.is_self)
 
 
 async def _process(message_id: int, *, perceive_kind: Optional[str] = None, mime: Optional[str] = None,
@@ -161,6 +162,7 @@ async def ingest_whatsapp(payload: WhatsAppMessage, bg: BackgroundTasks,
         sender_name=payload.sender_name,
         from_me=payload.from_me,
         is_group=payload.is_group,
+        is_self=payload.is_self,
         text=text,
         media_type=payload.media_type,
         media_path=media_path,

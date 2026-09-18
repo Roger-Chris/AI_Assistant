@@ -27,6 +27,7 @@ class Message(SQLModel, table=True):
     sender_name: Optional[str] = None
     from_me: bool = False
     is_group: bool = False
+    is_self: bool = False  # the "message yourself" chat — notes / instructions to the assistant
     text: str = ""
     media_type: Optional[str] = None  # "audio" | "image" | "document" ...
     media_path: Optional[str] = None  # where we stored the bytes, if any
@@ -130,7 +131,11 @@ def _migrate_columns() -> None:
             for col in table.columns:
                 if col.name not in existing:
                     ctype = col.type.compile(engine.dialect)
-                    conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" {ctype}'))
+                    default = ""
+                    if col.default is not None and getattr(col.default, "is_scalar", False):
+                        v = col.default.arg
+                        default = f" DEFAULT {int(v) if isinstance(v, bool) else repr(v)}"
+                    conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" {ctype}{default}'))
 
 
 def get_session():

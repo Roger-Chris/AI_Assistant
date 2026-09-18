@@ -58,13 +58,16 @@ def owner_mentioned(text: str, sender_is_me: bool = False) -> bool:
 
 
 def prefilter(text: str, *, is_group: bool, from_me: bool, forwarded: bool = False,
-              media_type: Optional[str] = None, has_open_task: bool = False) -> Optional[str]:
+              media_type: Optional[str] = None, has_open_task: bool = False,
+              is_self: bool = False) -> Optional[str]:
     """Return a skip reason, or None to let the LLM see it.
 
     has_open_task: this chat has an open/pending task. Then short replies and media FROM ME
     are exactly the messages that update or close it ("ok", "sent", the file itself), so they pass.
     """
     t = _norm(text)
+    if is_self and t and not text.startswith("[sent a "):
+        return None  # notes to self are always deliberate
     if has_open_task and from_me and (t or media_type in ("document", "image", "video")):
         return None
     if not t:

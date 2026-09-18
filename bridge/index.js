@@ -6,6 +6,7 @@ import makeWASocket, {
   DisconnectReason,
   downloadMediaMessage,
   fetchLatestBaileysVersion,
+  jidNormalizedUser,
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys';
 import pino from 'pino';
@@ -29,6 +30,7 @@ const contactNames = new Map(); // pn jid -> name
 const lidToPn = new Map(); // xxx@lid -> xxx@s.whatsapp.net
 let directoryDirty = false;
 let directoryTimer = null;
+let ownPn = null; // my own phone-number jid — messages to it are notes-to-self
 
 function resolveJid(jid) {
   if (jid && jid.endsWith('@lid')) return lidToPn.get(jid) || jid;
@@ -184,6 +186,7 @@ async function toPayload(sock, msg, { allowFetch = true } = {}) {
     sender_name: msg.key.fromMe ? 'me' : (msg.pushName || null),
     from_me: !!msg.key.fromMe,
     is_group: isGroup,
+    is_self: !!ownPn && jid === ownPn,
     text: content.text || '',
     media_type: content.media_type || null,
     forwarded: isForwarded(msg),
@@ -235,7 +238,11 @@ async function start() {
       qrcode.generate(qr, { small: true });
     }
     if (connection === 'open') {
-      log.info('whatsapp connected');
+      ownPn = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
+      const ownLid = sock.user?.lid ? jidNormalizedUser(sock.user.lid) : null;
+      if (ownPn && ownLid) { lidToPn.set(ownLid, ownPn); directoryDirty = true; }
+      if (ownPn) contactNames.set(ownPn, 'Me (notes to self)');
+      log.info({ me: ownPn, lid: ownLid }, 'whatsapp connected');
       loadAllGroupNames(sock);
     }
     if (connection === 'close') {
