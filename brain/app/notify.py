@@ -66,7 +66,15 @@ def fmt_due(task: Task) -> str:
 async def new_task(session: Session, task: Task, src: Message) -> None:
     icon = {"task": "📝", "event": "📅", "question": "❓"}.get(task.kind.value, "•")
     flag = " 🔴" if task.priority == "urgent" else (" 🟠" if task.priority == "high" else "")
-    where = src.chat_name or src.sender_name or src.chat_id.split("@")[0]
+    chat = src.chat_name or src.chat_id.split("@")[0]
+    if src.is_self:
+        where = "your notes"
+    elif src.from_me:
+        where = f"you → {chat}"
+    elif src.is_group:
+        where = f"{src.sender_name or src.sender_id.split('@')[0]} in {chat}"
+    else:
+        where = chat
     quote = (src.text or "").replace("<", "&lt;")[:200]
     text = (
         f"{icon} <b>{task.title}</b>{flag}\n"
