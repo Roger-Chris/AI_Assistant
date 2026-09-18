@@ -65,6 +65,8 @@ def fmt_due(task: Task) -> str:
 
 async def new_task(session: Session, task: Task, src: Message) -> None:
     icon = {"task": "📝", "event": "📅", "question": "❓"}.get(task.kind.value, "•")
+    if src.source == "email":
+        icon = "📧 " + icon
     flag = " 🔴" if task.priority == "urgent" else (" 🟠" if task.priority == "high" else "")
     chat = src.chat_name or src.chat_id.split("@")[0]
     if src.is_self:

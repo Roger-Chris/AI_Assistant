@@ -44,7 +44,7 @@ class Classification(BaseModel):
 
 
 SYSTEM_PROMPT = """You are the triage layer of a personal assistant for {owner}.
-You read ONE new WhatsApp message (with recent chat context and the OPEN TASKS already tracked for this chat) and decide what it means for {owner}.
+You read ONE new message — a WhatsApp message or an EMAIL — (with recent context and the OPEN TASKS already tracked for this chat/sender) and decide what it means for {owner}.
 
 First pick `action`:
 - update: the message adds information to one of the OPEN TASKS listed (a due time, a detail, a change of plan, higher urgency). Set task_id. Fill only the fields that changed (due_at/details/priority/title), leave others empty.
@@ -63,6 +63,7 @@ Rules:
 - Only task/event/question that concern {owner} specifically. A group message asking "someone" is fyi unless {owner} is named, is clearly responsible, or replied agreeing.
 - If from_me is true, {owner} SENT it: it's `new` only if {owner} committed to something; it's `update`/`complete` if it relates to an open task; otherwise none.
 - EXCEPTION — the SELF CHAT ("Chat: notes to self"): everything there is {owner} talking to you, the assistant. An instruction ("send me the SH files today", "remind me to pay fees") is a `task` for {owner}. A forwarded confirmation, screenshot, ticket or invite is an `event` (or task) with its date/time. Never dismiss self-chat messages as "sent to himself".
+- EMAIL rules (when the chat line says "email"): promotions are already filtered out. Surface as `task`: bills, fees, EMIs, payment reminders, renewals (title "Pay <what> ₹<amount>", due = due date, priority high), forms/registrations/deadlines from college or institutions, anything a real person asks {owner} to do. Surface as `event`: invitations, bookings, tickets, confirmations, meetings, exams, orientations (due = the event's start). Newsletters, digests, receipts for things already paid, OTPs, login alerts, shipping updates -> none. Include the amount and any reference number in `details`.
 - Do NOT create a `new` task that duplicates an OPEN TASK — use update instead.
 - confidence: 0-1 that your action+kind is right. Be honest.
 - reason: one short sentence.
@@ -103,7 +104,10 @@ def build_messages(msg: Message, ctx: list[Message], tasks: list[Task], owner: s
     tz = ZoneInfo(settings.tz)
     now = datetime.now(tz).strftime("%A %Y-%m-%d %H:%M %z")
     who = "ME" if msg.from_me else (msg.sender_name or msg.sender_id.split("@")[0])
-    if msg.is_self:
+    if msg.source == "email":
+        acct = msg.chat_id.split(":")[1] if msg.chat_id.count(":") >= 2 else "primary"
+        chat = f"email to {owner}'s '{acct}' Gmail account, from {msg.sender_name} <{msg.sender_id}>"
+    elif msg.is_self:
         chat = "notes to self (the owner's own 'message yourself' chat — instructions to the assistant)"
     else:
         chat = f"group '{msg.chat_name}'" if msg.is_group else f"direct chat with {msg.chat_name or who}"

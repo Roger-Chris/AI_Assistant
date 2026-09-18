@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     google_dir: str = "./data/google"
     calendar_name: str = "Assistant"
     calendar_sync_tasks_with_due: bool = True  # tasks with a due time also get a 30-min block
+    gmail_poll_minutes: int = 5
+    gmail_backfill_days: int = 3  # first poll looks back this far
 
     # telegram interim remote
     telegram_bot_token: str = ""
