@@ -131,12 +131,16 @@ async function start() {
     if (type !== 'notify') return; // 'append' = history sync; we only want live messages
     for (const msg of messages) {
       try {
-        const jid = msg.key.remoteJid;
+        let jid = msg.key.remoteJid;
         if (!jid || jid === 'status@broadcast' || IGNORE_JIDS.has(jid)) continue;
+        // WhatsApp's newer "LID" addressing: prefer the phone-number form when Baileys gives it,
+        // so the same contact doesn't show up under two ids.
+        if (jid.endsWith('@lid')) jid = msg.key.remoteJidAlt || msg.key.senderPn || jid;
         const content = extractContent(msg);
         if (!content) continue;
         const isGroup = jid.endsWith('@g.us');
-        const senderId = isGroup ? (msg.key.participant || jid) : jid;
+        let senderId = isGroup ? (msg.key.participant || jid) : jid;
+        if (senderId.endsWith('@lid')) senderId = msg.key.participantAlt || msg.key.senderPn || senderId;
 
         const payload = {
           id: msg.key.id,
