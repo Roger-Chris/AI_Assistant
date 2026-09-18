@@ -104,3 +104,34 @@ async def ingest_whatsapp(payload: WhatsAppMessage, bg: BackgroundTasks,
         session.add(msg)
         session.commit()
     return {"ok": True, "message_id": msg.id}
+
+
+class HistoryBatch(BaseModel):
+    messages: list[WhatsAppMessage]
+
+
+@router.post("/whatsapp/history")
+def ingest_history(batch: HistoryBatch, session: Session = Depends(get_session)) -> dict:
+    """Backfill from WhatsApp's history sync. Stored for CONTEXT only: marked classified so the
+    triage pass never touches them (no quota burn, no flood of stale task cards)."""
+    known = {
+        r for r in session.exec(
+            select(Message.external_id).where(Message.external_id.in_([m.id for m in batch.messages]))  # type: ignore[attr-defined]
+        ).all()
+    }
+    added = 0
+    for m in batch.messages:
+        if m.id in known or not m.text.strip():
+            continue
+        known.add(m.id)
+        session.add(Message(
+            source="whatsapp", external_id=m.id, chat_id=m.chat_id, chat_name=m.chat_name,
+            sender_id=m.sender_id, sender_name=m.sender_name, from_me=m.from_me, is_group=m.is_group,
+            text=m.text, media_type=m.media_type,
+            sent_at=datetime.fromtimestamp(m.timestamp, tz=timezone.utc),
+            classified=True, classification='{"kind":"history","reason":"backfilled, context only"}',
+        ))
+        added += 1
+    session.commit()
+    log.info("history batch: %d received, %d stored", len(batch.messages), added)
+    return {"ok": True, "received": len(batch.messages), "stored": added}

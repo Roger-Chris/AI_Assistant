@@ -93,3 +93,17 @@ def test_manual_task_and_patch(client):
     tid = r.json()["id"]
     r = client.patch(f"/tasks/{tid}", json={"title": "Buy 10k resistors"})
     assert r.json()["title"] == "Buy 10k resistors"
+
+
+def test_history_is_stored_as_context_not_tasks(client, fake_llm):
+    fake_llm.script["send the report"] = {"kind": "task", "title": "x", "confidence": 0.95}
+    old = [wa("please send the report", chat_id="h@s.whatsapp.net", timestamp=int(time.time()) - 86400),
+           wa("ok", chat_id="h@s.whatsapp.net", timestamp=int(time.time()) - 86000)]
+    r = client.post("/ingest/whatsapp/history", json={"messages": old})
+    assert r.json()["stored"] == 2
+    assert not [t for t in client.get("/tasks").json() if t["source_text"] == "please send the report"]
+    r = client.post("/ingest/whatsapp/history", json={"messages": old})
+    assert r.json()["stored"] == 0                     # idempotent
+    # ...but it is visible as context to the classifier for a new live message in that chat
+    client.post("/ingest/whatsapp", json=wa("did you get it?", chat_id="h@s.whatsapp.net"))
+    assert "please send the report" in fake_llm.calls[-1][-1]["content"]

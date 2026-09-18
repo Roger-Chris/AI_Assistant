@@ -61,6 +61,15 @@ never hit the model. The raw verdict is kept on the `message` row so you can aud
 
 Tune the prompt in `brain/app/classifier.py`; run `cd brain && pytest` after.
 
+## History (context)
+
+With `HISTORY_SYNC=recent` (default) or `full`, the bridge forwards the chat history WhatsApp
+pushes at link time to `POST /ingest/whatsapp/history`. Those rows are stored `classified=true`:
+they are never triaged (no quota, no flood of stale task cards) but they are the context the
+classifier sees for new messages and the raw material for the memory graph later. History only
+arrives when a device links, so to (re)enable it: unlink the bridge in WhatsApp → Linked devices,
+delete `data/bridge-auth/`, restart the bridge and re-scan.
+
 ## Data & privacy
 
 `data/` holds your WhatsApp session, the SQLite db with every message, and voice notes.
