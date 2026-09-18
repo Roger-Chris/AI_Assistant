@@ -1,0 +1,79 @@
+"""Scheduled jobs: the daily brief (planner model) and a catch-up classification sweep."""
+from __future__ import annotations
+
+import logging
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from sqlmodel import Session, select
+
+from .classifier import classify_pending
+from .config import settings
+from .db import Task, TaskStatus, engine
+from .llm import LLM, planner_profile
+from .notify import fmt_due, send
+
+log = logging.getLogger("brain.scheduler")
+scheduler = AsyncIOScheduler(timezone=settings.tz)
+
+BRIEF_PROMPT = """You are {owner}'s personal assistant writing the morning brief.
+Today is {today} ({tz}). Below are their open tasks/events (unconfirmed ones were auto-extracted from chats and not yet accepted).
+
+Write a brief in plain text (no markdown headers), under 150 words:
+1. What matters today, in priority order, with times.
+2. Anything overdue or due in the next 2 days.
+3. Unconfirmed items they should accept or drop, in one line.
+Be specific and direct; no filler, no motivational lines.
+
+TASKS:
+{tasks}"""
+
+
+def _dump(tasks: list[Task]) -> str:
+    return "\n".join(
+        f"- [{t.status.value}] ({t.kind.value}, {t.priority}) {t.title} — due {fmt_due(t)}"
+        + (f" — with {t.people}" if t.people else "") for t in tasks
+    ) or "(none)"
+
+
+async def daily_brief() -> None:
+    with Session(engine) as session:
+        tasks = session.exec(
+            select(Task).where(Task.status.in_([TaskStatus.open, TaskStatus.pending_confirmation]))  # type: ignore[attr-defined]
+            .order_by(Task.due_at.is_(None), Task.due_at)  # type: ignore[attr-defined]
+        ).all()
+        tz = ZoneInfo(settings.tz)
+        prompt = BRIEF_PROMPT.format(owner=settings.owner_name, today=datetime.now(tz).strftime("%A %d %B %Y"),
+                                     tz=settings.tz, tasks=_dump(tasks))
+        try:
+            text = await LLM(planner_profile()).complete([{"role": "user", "content": prompt}], max_tokens=400)
+        except Exception as e:  # noqa: BLE001 — fall back to a plain list rather than silence
+            log.warning("planner unavailable for brief (%s); sending raw list", e)
+            text = "Morning brief (planner offline):\n" + _dump(tasks)
+        await send("☀️ " + text.replace("<", "&lt;"), session)
+
+
+async def catch_up() -> None:
+    with Session(engine) as session:
+        made = await classify_pending(session, settings.owner_name)
+        if made:
+            log.info("catch-up classified %d new tasks", len(made))
+
+
+async def overdue_nudge() -> None:
+    """Once a day at 18:00: anything open and overdue gets one nudge."""
+    with Session(engine) as session:
+        now = datetime.now(ZoneInfo("UTC"))
+        tasks = [t for t in session.exec(select(Task).where(Task.status == TaskStatus.open)).all()
+                 if t.due_at and (t.due_at if t.due_at.tzinfo else t.due_at.replace(tzinfo=ZoneInfo("UTC"))) < now - timedelta(hours=1)]
+        if tasks:
+            await send("⏰ Overdue:\n" + "\n".join(f"#{t.id} {t.title} — {fmt_due(t)}" for t in tasks), session,
+                       priority="high")
+
+
+def start() -> None:
+    scheduler.add_job(daily_brief, "cron", hour=settings.daily_brief_hour, minute=0, id="brief")
+    scheduler.add_job(overdue_nudge, "cron", hour=18, minute=0, id="overdue")
+    scheduler.add_job(catch_up, "interval", minutes=10, id="catch_up")
+    scheduler.start()

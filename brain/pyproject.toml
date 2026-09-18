@@ -1,0 +1,28 @@
+[project]
+name = "brain"
+version = "0.1.0"
+description = "Always-on orchestrator for the personal assistant (CPU-only, no models run here)."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "sqlmodel>=0.0.22",
+    "pydantic-settings>=2.4",
+    "httpx>=0.27",
+    "apscheduler>=3.10,<4",
+    "python-dateutil>=2.9",
+    "tzdata>=2024.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.5"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.setuptools.packages.find]
+include = ["app*"]

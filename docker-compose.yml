@@ -1,0 +1,34 @@
+# Brain-side stack: CPU-only, portable to the Mac mini (linux/amd64).
+# GPU / laptop-only services live in worker/docker-compose.yml, never here.
+services:
+  brain:
+    build: ./brain
+    platform: linux/amd64
+    env_file: .env
+    environment:
+      - DATABASE_URL=sqlite:////data/brain.db
+      - MEDIA_DIR=/data/media
+    volumes:
+      - ./data/brain:/data
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  bridge:
+    build: ./bridge
+    platform: linux/amd64
+    env_file: .env
+    environment:
+      - BRAIN_URL=http://brain:8000
+    volumes:
+      - ./data/bridge-auth:/app/auth   # WhatsApp session — back this folder up
+    depends_on:
+      brain:
+        condition: service_healthy
+    restart: unless-stopped
+    # First run: `docker compose up bridge` (attached) to scan the QR code.

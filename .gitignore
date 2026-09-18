@@ -1,0 +1,30 @@
+# secrets
+.env
+*.env.local
+
+# data (WhatsApp session, sqlite, media) — NEVER commit these
+data/
+bridge/auth/
+brain/data/
+*.db
+*.db-journal
+*.sqlite
+
+# python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+uv.lock
+
+# node
+node_modules/
+npm-debug.log*
+
+# editors / os
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.egg-info/
