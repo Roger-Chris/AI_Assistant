@@ -53,7 +53,7 @@ First pick `action`:
 - none: nothing actionable (chit-chat, fyi, someone else's task, acknowledgements).
 
 If action is new (or update), also fill:
-- kind: task (something {owner} must DO/DELIVER — a request to them or a commitment they made), event (be somewhere at a time), question (someone waits on a non-trivial answer from {owner}), fyi, noise.
+- kind: task (something {owner} must DO/DELIVER — a request to them or a commitment they made), event (be somewhere at a time), question (someone is waiting for a REPLY from {owner} — any direct question to {owner} in a direct chat counts, even casual ones like "bus boarded?" or "where are you?"; these are tracked quietly and only surfaced if {owner} doesn't reply), fyi, noise.
 - title: short imperative, <= 80 chars, in {owner}'s perspective ("Send project report to Prof. Kumar").
 - due_at: resolve relative times ("in 10 mins", "tomorrow", "Friday 5pm") against NOW ({now}, timezone {tz}) to ISO-8601 WITH offset. Date without time -> 18:00 local. Null if none.
 - people: names involved (use the sender names given).
@@ -94,7 +94,7 @@ def _fmt_tasks(tasks: list[Task]) -> str:
 def open_tasks_for_chat(session: Session, chat_id: str, limit: int = 8) -> list[Task]:
     return list(session.exec(
         select(Task).where(Task.chat_id == chat_id,
-                           Task.status.in_([TaskStatus.open, TaskStatus.pending_confirmation]))  # type: ignore[attr-defined]
+                           Task.status.in_([TaskStatus.open, TaskStatus.pending_confirmation, TaskStatus.watching]))  # type: ignore[attr-defined]
         .order_by(Task.created_at.desc()).limit(limit)
     ).all())
 
@@ -179,6 +179,14 @@ async def classify_message(session: Session, msg: Message, owner: str = "the use
     target = by_id.get(result.task_id) if result.task_id else None
     conf_ok = result.confidence >= settings.classifier_min_confidence
 
+    # any reply from the owner in this chat answers the questions being watched there — silently
+    if msg.from_me:
+        for t in tasks:
+            if t.status == TaskStatus.watching:
+                t.status = TaskStatus.done
+                touch(t)
+                session.add(t)
+
     if result.action == "complete" and target and conf_ok:
         target.status = TaskStatus.done
         touch(target)
@@ -203,7 +211,8 @@ async def classify_message(session: Session, msg: Message, owner: str = "the use
         # "update" with no valid target falls through to creating a task
         task = Task(
             kind=TaskKind(result.kind),
-            status=TaskStatus.pending_confirmation,
+            status=TaskStatus.watching if result.kind == "question" and not msg.is_self
+            else TaskStatus.pending_confirmation,
             title=result.title[:200] or (msg.text[:80] if msg.text else "Untitled"),
             details=result.details or None,
             due_at=_parse_due(result.due_at),

@@ -8,11 +8,11 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlmodel import Session, select
 
-from .classifier import classify_pending
+from .classifier import classify_pending, touch
 from .config import settings
-from .db import Task, TaskStatus, engine
+from .db import Message, Task, TaskStatus, engine
 from .llm import LLM, planner_profile
-from .notify import fmt_due, send
+from .notify import fmt_due, send, unanswered_question
 
 log = logging.getLogger("brain.scheduler")
 scheduler = AsyncIOScheduler(timezone=settings.tz)
@@ -76,4 +76,32 @@ def start() -> None:
     scheduler.add_job(daily_brief, "cron", hour=settings.daily_brief_hour, minute=0, id="brief")
     scheduler.add_job(overdue_nudge, "cron", hour=18, minute=0, id="overdue")
     scheduler.add_job(catch_up, "interval", minutes=10, id="catch_up")
+    scheduler.add_job(unanswered_sweep, "interval", minutes=5, id="unanswered")
     scheduler.start()
+
+
+async def unanswered_sweep() -> None:
+    """Questions watched for longer than the grace period with no reply from the owner -> surface."""
+    grace = timedelta(minutes=settings.question_grace_minutes)
+    with Session(engine) as session:
+        now = datetime.now(ZoneInfo("UTC"))
+        for t in session.exec(select(Task).where(Task.status == TaskStatus.watching)).all():
+            created = t.created_at if t.created_at.tzinfo else t.created_at.replace(tzinfo=ZoneInfo("UTC"))
+            if now - created < grace:
+                continue
+            src = session.get(Message, t.source_message_id) if t.source_message_id else None
+            replied = False
+            if src:
+                replied = session.exec(
+                    select(Message).where(Message.chat_id == src.chat_id, Message.from_me == True,  # noqa: E712
+                                          Message.sent_at > src.sent_at).limit(1)
+                ).first() is not None
+            if replied:
+                t.status = TaskStatus.done
+            else:
+                t.status = TaskStatus.open
+                t.priority = "high"
+                await unanswered_question(session, t, src, int((now - created).total_seconds() // 60))
+            touch(t)
+            session.add(t)
+        session.commit()

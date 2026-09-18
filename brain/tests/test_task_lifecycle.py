@@ -111,3 +111,49 @@ def test_self_chat_note_becomes_task(client, fake_llm):
     assert "skipped" not in r.json()
     assert "notes to self" in fake_llm.calls[-1][-1]["content"]
     assert [t for t in client.get("/tasks").json() if t["title"] == "Send SH files"]
+
+
+def test_question_is_watched_then_surfaced_or_closed(client, fake_llm, monkeypatch):
+    import asyncio
+    from datetime import timedelta
+    from sqlmodel import Session, select
+    from app import scheduler as sched
+    from app.db import Task, TaskStatus, engine, utcnow
+    sent = []
+    async def fake_send(text, session=None, buttons=None, priority="normal"):
+        sent.append(text)
+    monkeypatch.setattr(sched, "unanswered_question",
+                        lambda session, t, src, m: fake_send(f"waiting:{t.title}"))
+    q = {"chat_id": "q@s.whatsapp.net", "sender_id": "q@s.whatsapp.net", "chat_name": "Julie", "sender_name": "Julie"}
+    fake_llm.script["bus boarded"] = {"action": "new", "kind": "question", "title": "Reply to Julie: bus boarded?",
+                                      "confidence": 0.9}
+    r = client.post("/ingest/whatsapp", json=wa("Bus boarded ?", **q))
+    assert "skipped" not in r.json()
+    # watched, not surfaced, not in /tasks
+    with Session(engine) as s:
+        t = s.exec(select(Task).where(Task.chat_id == "q@s.whatsapp.net")).one()
+        assert t.status == TaskStatus.watching
+        tid = t.id
+    assert not [x for x in client.get("/tasks").json() if x["id"] == tid]
+    # not yet past grace -> sweep does nothing
+    asyncio.run(sched.unanswered_sweep())
+    assert sent == []
+    # age it past grace with no reply -> surfaced
+    with Session(engine) as s:
+        t = s.get(Task, tid)
+        t.created_at = utcnow() - timedelta(minutes=30)
+        s.add(t)
+        s.commit()
+    asyncio.run(sched.unanswered_sweep())
+    assert sent == ["waiting:Reply to Julie: bus boarded?"]
+    with Session(engine) as s:
+        assert s.get(Task, tid).status == TaskStatus.open
+
+    # a second question, answered by my reply -> closed silently
+    fake_llm.script["where are you"] = {"action": "new", "kind": "question", "title": "Reply: where are you", "confidence": 0.9}
+    client.post("/ingest/whatsapp", json=wa("where are you?", **q))
+    fake_llm.default = {"action": "none", "kind": "noise", "confidence": 0.9}
+    client.post("/ingest/whatsapp", json=wa("on the bus, 10 min", from_me=True, **{**q, "sender_id": "me@s.whatsapp.net", "sender_name": "me"}))
+    with Session(engine) as s:
+        t2 = s.exec(select(Task).where(Task.title == "Reply: where are you")).one()
+        assert t2.status == TaskStatus.done

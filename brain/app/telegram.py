@@ -102,6 +102,9 @@ async def _handle_callback(cb: dict) -> None:
         elif t and action == "reopen":
             t.status = TaskStatus.open
             label = "↩️ Reopened"
+        elif t and action == "done":
+            t.status = TaskStatus.done
+            label = "✅ Done"
         if t:
             touch(t)
             session.add(t)

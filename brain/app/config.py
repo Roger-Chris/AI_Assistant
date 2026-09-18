@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     telegram_chat_id: str = ""
     daily_brief_hour: int = 8
 
+    # questions to you: surface only if unanswered after this many minutes (0 = surface at once)
+    question_grace_minutes: int = 20
+
     # how many prior messages from the same chat to show the classifier
     context_window: int = 6
 

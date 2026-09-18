@@ -14,7 +14,7 @@ from sqlmodel import Session, select
 from ..auth import require_token
 from ..classifier import classify_message, open_tasks_for_chat
 from ..config import settings
-from ..db import Chat, Message, engine, get_session
+from ..db import Chat, Message, engine, get_session, TaskStatus
 from ..prefilter import prefilter
 from .. import notify, perceive
 
@@ -117,7 +117,9 @@ async def _process(message_id: int, *, perceive_kind: Optional[str] = None, mime
         if not outcome or not outcome.task:
             return
         try:
-            if outcome.action == "new":
+            if outcome.action == "new" and outcome.task.status == TaskStatus.watching:
+                log.info("watching question #%s: %s", outcome.task.id, outcome.task.title)
+            elif outcome.action == "new":
                 await notify.new_task(session, outcome.task, msg)
             elif outcome.action == "update":
                 await notify.task_updated(session, outcome.task, outcome.changed, msg)

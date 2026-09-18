@@ -107,3 +107,14 @@ async def task_completed(session: Session, task: Task, src: Message) -> None:
     text = f"✅ <b>{task.title}</b> — marked done\nEvidence: “{evidence}”"
     buttons = [[{"text": "↩️ Not done, reopen", "callback_data": f"reopen:{task.id}"}]]
     await send(text, session, buttons, priority="low")
+
+
+async def unanswered_question(session: Session, task: Task, src: Optional[Message], minutes: int) -> None:
+    who = (src.sender_name or src.chat_name or "someone") if src else "someone"
+    quote = ((src.text or "") if src else task.title)[:160].replace("<", "&lt;")
+    text = f"❓ <b>{who} is waiting</b> — “{quote}”\n{minutes} min, no reply from you."
+    buttons = [[{"text": "✅ Replied / handled", "callback_data": f"done:{task.id}"},
+                {"text": "🙈 Ignore", "callback_data": f"reject:{task.id}"}]]
+    await send(text, session, buttons, priority="high")
+    task.notified = True
+    session.add(task)

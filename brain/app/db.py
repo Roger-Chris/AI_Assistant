@@ -44,6 +44,7 @@ class TaskKind(str, Enum):
 
 
 class TaskStatus(str, Enum):
+    watching = "watching"  # a question to the owner; surfaces only if unanswered for a grace period
     pending_confirmation = "pending_confirmation"  # extracted, waiting for the user to accept
     open = "open"
     done = "done"
