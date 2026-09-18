@@ -32,7 +32,9 @@ def _chat_id(session: Optional[Session]) -> str:
 async def tg(method: str, session: Optional[Session] = None, **params) -> Optional[dict]:
     if not settings.telegram_bot_token:
         return None
-    async with httpx.AsyncClient(timeout=20) as c:
+    # long-poll calls pass `timeout` (seconds Telegram holds the request); give the client headroom
+    http_timeout = float(params.get("timeout", 0)) + 15
+    async with httpx.AsyncClient(timeout=http_timeout) as c:
         r = await c.post(TG.format(token=settings.telegram_bot_token, method=method), json=params)
         if r.status_code != 200:
             log.warning("telegram %s failed: %s %s", method, r.status_code, r.text[:200])
