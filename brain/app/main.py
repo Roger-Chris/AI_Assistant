@@ -14,6 +14,7 @@ from .routers import ingest, tasks, workers
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("brain")
+logging.getLogger("httpx").setLevel(logging.WARNING)  # its INFO lines include the bot token
 
 
 @asynccontextmanager
