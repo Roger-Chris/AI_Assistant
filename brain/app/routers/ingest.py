@@ -132,6 +132,12 @@ def ingest_history(batch: HistoryBatch, session: Session = Depends(get_session))
             classified=True, classification='{"kind":"history","reason":"backfilled, context only"}',
         ))
         added += 1
+    # names arrive late for some groups (rate limits / later chunks): backfill rows that lack one
+    names = {m.chat_id: m.chat_name for m in batch.messages if m.is_group and m.chat_name}
+    for chat_id, name in names.items():
+        for row in session.exec(select(Message).where(Message.chat_id == chat_id, Message.chat_name.is_(None))).all():  # type: ignore[union-attr]
+            row.chat_name = name
+            session.add(row)
     session.commit()
     log.info("history batch: %d received, %d stored", len(batch.messages), added)
     return {"ok": True, "received": len(batch.messages), "stored": added}

@@ -54,15 +54,32 @@ function extractContent(msg) {
   return { text: '', media_type: 'unknown' };
 }
 
-async function groupName(sock, jid) {
+const groupNameFailedAt = new Map(); // jid -> ms; negative cache so a rate-limit doesn't cascade
+
+async function groupName(sock, jid, allowFetch = true) {
   if (groupNames.has(jid)) return groupNames.get(jid);
+  if (!allowFetch) return null;
+  const failed = groupNameFailedAt.get(jid);
+  if (failed && Date.now() - failed < 10 * 60 * 1000) return null; // back off 10 min per group
   try {
     const meta = await sock.groupMetadata(jid);
     groupNames.set(jid, meta.subject);
     return meta.subject;
   } catch (e) {
+    groupNameFailedAt.set(jid, Date.now());
     log.warn({ jid, err: e.message }, 'groupMetadata failed');
     return null;
+  }
+}
+
+// One call for every group we're in — populates the cache so per-message lookups are rare.
+async function loadAllGroupNames(sock) {
+  try {
+    const all = await sock.groupFetchAllParticipating();
+    for (const [jid, meta] of Object.entries(all)) if (meta?.subject) groupNames.set(jid, meta.subject);
+    log.info({ groups: groupNames.size }, 'group names loaded');
+  } catch (e) {
+    log.warn({ err: e.message }, 'groupFetchAllParticipating failed');
   }
 }
 
@@ -87,7 +104,7 @@ async function postHistory(batch) {
 }
 
 // Build the brain payload for one message, or null if it's not something we forward.
-async function toPayload(sock, msg) {
+async function toPayload(sock, msg, { allowFetch = true } = {}) {
   let jid = msg.key.remoteJid;
   if (!jid || jid === 'status@broadcast' || IGNORE_JIDS.has(jid)) return null;
   // WhatsApp's newer "LID" addressing: prefer the phone-number form when Baileys gives it,
@@ -101,7 +118,7 @@ async function toPayload(sock, msg) {
   return {
     id: msg.key.id,
     chat_id: jid,
-    chat_name: isGroup ? await groupName(sock, jid) : (msg.pushName || null),
+    chat_name: isGroup ? await groupName(sock, jid, allowFetch) : (msg.pushName || null),
     sender_id: senderId,
     sender_name: msg.key.fromMe ? 'me' : (msg.pushName || null),
     from_me: !!msg.key.fromMe,
@@ -155,7 +172,10 @@ async function start() {
       log.info('scan this QR with WhatsApp > Linked devices');
       qrcode.generate(qr, { small: true });
     }
-    if (connection === 'open') log.info('whatsapp connected');
+    if (connection === 'open') {
+      log.info('whatsapp connected');
+      loadAllGroupNames(sock);
+    }
     if (connection === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode;
       if (code === DisconnectReason.loggedOut) {
@@ -188,7 +208,7 @@ async function start() {
   const queueHistory = async (messages) => {
     for (const msg of messages) {
       try {
-        const p = await toPayload(sock, msg);
+        const p = await toPayload(sock, msg, { allowFetch: false }); // never hit the metadata API during backfill
         if (p && p.text) { delete p._content; history.push(p); }
       } catch (e) { log.warn({ err: e.message }, 'history message skipped'); }
     }
@@ -197,8 +217,10 @@ async function start() {
   };
 
   if (HISTORY_SYNC !== 'off') {
-    sock.ev.on('messaging-history.set', ({ messages, isLatest, progress }) => {
-      log.info({ count: messages.length, isLatest, progress }, 'history chunk');
+    sock.ev.on('messaging-history.set', ({ chats, messages, isLatest, progress }) => {
+      // the bundle carries chat names — take them from here instead of asking WhatsApp per message
+      for (const c of chats || []) if (c?.id?.endsWith('@g.us') && c.name) groupNames.set(c.id, c.name);
+      log.info({ count: messages.length, chats: (chats || []).length, isLatest, progress }, 'history chunk');
       queueHistory(messages);
     });
   }
