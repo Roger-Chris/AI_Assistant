@@ -62,6 +62,10 @@ async def _handle_message(m: dict) -> None:
                 reply = f"Done: {t.title}"
             except (IndexError, ValueError, AssertionError):
                 reply = "Usage: /done <id>"
+        elif text.startswith("/brief"):
+            from . import scheduler as _sched
+            await _sched.daily_brief()
+            return
         elif text.startswith("/chats"):
             chats = session.exec(select(Chat).order_by(Chat.message_count.desc()).limit(40)).all()  # type: ignore[attr-defined]
             reply = "Chats by volume (id · name · msgs):\n" + "\n".join(
@@ -79,7 +83,7 @@ async def _handle_message(m: dict) -> None:
             except (IndexError, ValueError, AssertionError):
                 reply = "Usage: /mute <id> or /unmute <id> (ids from /chats)"
         else:
-            reply = "Commands: /tasks, /today, /done <id>, /chats, /mute <id>, /unmute <id>. Chat comes in Phase 2."
+            reply = "Commands: /tasks, /today, /brief, /done <id>, /chats, /mute <id>, /unmute <id>. Chat comes in Phase 2."
     await tg("sendMessage", chat_id=chat_id, text=reply, parse_mode="HTML")
 
 

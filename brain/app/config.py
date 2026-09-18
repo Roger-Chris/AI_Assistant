@@ -21,10 +21,10 @@ class Settings(BaseSettings):
     classifier_min_confidence: float = 0.6
 
     # strong, low-volume model
-    planner_base_url: str = "https://openrouter.ai/api/v1"
+    planner_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
     planner_api_key: str = ""
     planner_api_keys: str = ""
-    planner_model: str = "anthropic/claude-sonnet-4"
+    planner_model: str = "gemini-3.8-flash"
 
     # perceive: voice notes -> transcript, images -> description (multimodal Gemini, same keys)
     perceive_enabled: bool = True
