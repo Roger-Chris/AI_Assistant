@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     classifier_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
     classifier_api_key: str = ""
     classifier_api_keys: str = ""  # comma-separated; rotated round-robin, overrides the single key
-    classifier_model: str = "gemini-2.5-flash"
+    classifier_model: str = "gemini-3.5-flash-lite"
     classifier_min_confidence: float = 0.6
 
     # strong, low-volume model
