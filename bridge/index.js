@@ -15,6 +15,9 @@ import path from 'node:path';
 const BRAIN_URL = (process.env.BRAIN_URL || 'http://localhost:8000').replace(/\/$/, '');
 const BRAIN_TOKEN = process.env.BRAIN_TOKEN || 'change-me';
 const FORWARD_AUDIO = (process.env.FORWARD_AUDIO || 'true').toLowerCase() === 'true';
+// FORWARD_IMAGES: off | dm (direct chats, plus captioned group images) | all
+const FORWARD_IMAGES = (process.env.FORWARD_IMAGES || 'dm').toLowerCase();
+const MAX_MEDIA_BYTES = Number(process.env.MAX_MEDIA_BYTES || 6 * 1024 * 1024);
 const IGNORE_JIDS = new Set((process.env.IGNORE_JIDS || '').split(',').map((s) => s.trim()).filter(Boolean));
 const AUTH_DIR = process.env.AUTH_DIR || path.join(process.cwd(), 'auth');
 // HISTORY_SYNC: off | recent | full. History only arrives at link time (re-scan the QR after changing).
@@ -90,7 +93,7 @@ function extractContent(msg) {
   const m = unwrap(msg.message);
   if (m.conversation) return { text: m.conversation };
   if (m.extendedTextMessage) return { text: m.extendedTextMessage.text || '' };
-  if (m.imageMessage) return { text: m.imageMessage.caption || '', media_type: 'image' };
+  if (m.imageMessage) return { text: m.imageMessage.caption || '', media_type: 'image', mime: m.imageMessage.mimetype || 'image/jpeg', bytes: Number(m.imageMessage.fileLength || 0) };
   if (m.videoMessage) return { text: m.videoMessage.caption || '', media_type: 'video' };
   if (m.documentMessage) return { text: m.documentMessage.caption || m.documentMessage.fileName || '', media_type: 'document' };
   if (m.audioMessage) return { text: '', media_type: 'audio', mime: m.audioMessage.mimetype, isVoice: !!m.audioMessage.ptt };
@@ -306,13 +309,19 @@ async function start() {
         const content = payload._content;
         delete payload._content;
 
-        if (content.media_type === 'audio' && content.isVoice && FORWARD_AUDIO) {
+        const wantAudio = content.media_type === 'audio' && content.isVoice && FORWARD_AUDIO;
+        const wantImage = content.media_type === 'image' && FORWARD_IMAGES !== 'off' &&
+          (FORWARD_IMAGES === 'all' || !payload.is_group || !!content.text) &&
+          (content.bytes || 0) <= MAX_MEDIA_BYTES;
+        if (wantAudio || wantImage) {
           try {
             const buf = await downloadMediaMessage(msg, 'buffer', {}, { logger: log, reuploadRequest: sock.updateMediaMessage });
-            payload.media_b64 = buf.toString('base64');
-            payload.media_mime = content.mime || 'audio/ogg';
+            if (buf.length <= MAX_MEDIA_BYTES) {
+              payload.media_b64 = buf.toString('base64');
+              payload.media_mime = content.mime || (wantAudio ? 'audio/ogg' : 'image/jpeg');
+            }
           } catch (e) {
-            log.warn({ err: e.message }, 'voice note download failed');
+            log.warn({ err: e.message, kind: content.media_type }, 'media download failed');
           }
         }
 

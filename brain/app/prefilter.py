@@ -58,9 +58,15 @@ def owner_mentioned(text: str, sender_is_me: bool = False) -> bool:
 
 
 def prefilter(text: str, *, is_group: bool, from_me: bool, forwarded: bool = False,
-              media_type: Optional[str] = None) -> Optional[str]:
-    """Return a skip reason, or None to let the LLM see it."""
+              media_type: Optional[str] = None, has_open_task: bool = False) -> Optional[str]:
+    """Return a skip reason, or None to let the LLM see it.
+
+    has_open_task: this chat has an open/pending task. Then short replies and media FROM ME
+    are exactly the messages that update or close it ("ok", "sent", the file itself), so they pass.
+    """
     t = _norm(text)
+    if has_open_task and from_me and (t or media_type in ("document", "image", "video")):
+        return None
     if not t:
         return "empty"
     if len(t) <= 2 and not t.isalpha():
@@ -73,8 +79,10 @@ def prefilter(text: str, *, is_group: bool, from_me: bool, forwarded: bool = Fal
         return "chitchat"
     if _URL_ONLY.match(text):
         return "url-only"
-    if media_type == "audio" and text.startswith("[voice note"):
+    if media_type == "audio" and (t == "voice note" or "could not transcribe" in t):
         return "voice-note-untranscribed"
+    if text.startswith("[sent a ") and not has_open_task:
+        return "media-from-me-no-open-task"
     if is_group:
         if forwarded:
             return "forwarded-in-group"

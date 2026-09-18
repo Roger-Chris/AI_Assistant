@@ -29,7 +29,7 @@ def test_noise_creates_no_task(client, fake_llm):
 
 def test_task_extracted_and_confirmable(client, fake_llm):
     fake_llm.script["send the report"] = {
-        "kind": "task", "title": "Send project report to Jayesh", "details": "",
+        "action": "new", "kind": "task", "title": "Send project report to Jayesh", "details": "",
         "due_at": "2026-09-19T18:00:00+05:30", "people": ["Jayesh"], "priority": "high",
         "confidence": 0.92, "reason": "direct request",
     }
@@ -54,13 +54,13 @@ def test_task_extracted_and_confirmable(client, fake_llm):
 
 
 def test_low_confidence_is_dropped(client, fake_llm):
-    fake_llm.script["maybe"] = {"kind": "task", "title": "x", "confidence": 0.3, "reason": "guess"}
+    fake_llm.script["maybe"] = {"action": "new", "kind": "task", "title": "x", "confidence": 0.3, "reason": "guess"}
     client.post("/ingest/whatsapp", json=wa("maybe we should do something sometime"))
     assert client.get("/tasks").json() == []
 
 
 def test_duplicate_message_is_idempotent(client, fake_llm):
-    fake_llm.script["submit the form"] = {"kind": "task", "title": "Submit form", "confidence": 0.9}
+    fake_llm.script["submit the form"] = {"action": "new", "kind": "task", "title": "Submit form", "confidence": 0.9}
     payload = wa("please submit the form")
     client.post("/ingest/whatsapp", json=payload)
     r = client.post("/ingest/whatsapp", json=payload)
@@ -71,7 +71,7 @@ def test_duplicate_message_is_idempotent(client, fake_llm):
 def test_context_is_passed_to_classifier(client, fake_llm):
     chat = {"chat_id": "grp@g.us", "chat_name": "Project Team", "is_group": True}
     client.post("/ingest/whatsapp", json=wa("meeting tomorrow?", **chat))
-    fake_llm.script["yes 5pm works"] = {"kind": "event", "title": "Team meeting", "confidence": 0.8,
+    fake_llm.script["yes 5pm works"] = {"action": "new", "kind": "event", "title": "Team meeting", "confidence": 0.8,
                                        "due_at": "2026-09-19T17:00:00+05:30"}
     client.post("/ingest/whatsapp", json=wa("yes 5pm works", **chat))
     user_prompt = fake_llm.calls[-1][-1]["content"]
@@ -96,7 +96,7 @@ def test_manual_task_and_patch(client):
 
 
 def test_history_is_stored_as_context_not_tasks(client, fake_llm):
-    fake_llm.script["send the report"] = {"kind": "task", "title": "x", "confidence": 0.95}
+    fake_llm.script["send the report"] = {"action": "new", "kind": "task", "title": "x", "confidence": 0.95}
     old = [wa("please send the report", chat_id="h@s.whatsapp.net", timestamp=int(time.time()) - 86400),
            wa("ok", chat_id="h@s.whatsapp.net", timestamp=int(time.time()) - 86000)]
     r = client.post("/ingest/whatsapp/history", json={"messages": old})
@@ -107,3 +107,13 @@ def test_history_is_stored_as_context_not_tasks(client, fake_llm):
     # ...but it is visible as context to the classifier for a new live message in that chat
     client.post("/ingest/whatsapp", json=wa("did you get it?", chat_id="h@s.whatsapp.net"))
     assert "please send the report" in fake_llm.calls[-1][-1]["content"]
+
+
+def test_directory_merges_lid_and_fills_names(client):
+    old = [wa("hello from lid", chat_id="777@lid", sender_id="777@lid", chat_name=None, timestamp=int(time.time()) - 5000),
+           wa("group msg", chat_id="g1@g.us", sender_id="1@s.whatsapp.net", chat_name=None, is_group=True,
+              timestamp=int(time.time()) - 4000)]
+    client.post("/ingest/whatsapp/history", json={"messages": old})
+    r = client.post("/ingest/whatsapp/directory", json={"names": {"g1@g.us": "Project Team", "9177@s.whatsapp.net": "Priya"},
+                                                        "aliases": {"777@lid": "9177@s.whatsapp.net"}})
+    assert r.json() == {"ok": True, "merged": 1, "renamed": 2}

@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     planner_api_keys: str = ""
     planner_model: str = "anthropic/claude-sonnet-4"
 
+    # perceive: voice notes -> transcript, images -> description (multimodal Gemini, same keys)
+    perceive_enabled: bool = True
+    perceive_model: str = ""  # defaults to classifier_model
+    perceive_max_bytes: int = 8_000_000
+
     # telegram interim remote
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""

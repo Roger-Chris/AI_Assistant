@@ -1,7 +1,15 @@
-"""Stage-1 classification: is this message a task / event / question / fyi / noise?
+"""Stage-1 triage, task-aware.
 
-Runs on the cheap model for every inbound message. Only task/event/question above the
-confidence threshold become Task rows (status pending_confirmation) for the user to accept.
+For every message that survives the pre-filter, the cheap model sees: recent messages in the
+chat, the OPEN tasks that came from this chat, and the new message. It answers with an ACTION:
+
+  new       — a fresh task / event / question (creates a pending_confirmation Task)
+  update    — this message adds a due date / detail / priority to an existing task
+  complete  — this message is evidence an existing task is done ("sent", a document from me)
+  none      — nothing to do (chit-chat, fyi, noise)
+
+That is what stops "can you send X" + "I'll send in 10 min" becoming two cards, and what lets
+the file you actually send close the task.
 """
 from __future__ import annotations
 
@@ -23,7 +31,9 @@ log = logging.getLogger("brain.classifier")
 
 
 class Classification(BaseModel):
-    kind: Literal["task", "event", "question", "fyi", "noise"]
+    action: Literal["new", "update", "complete", "none"] = "none"
+    task_id: Optional[int] = None  # for update / complete
+    kind: Literal["task", "event", "question", "fyi", "noise"] = "noise"
     title: str = ""
     details: str = ""
     due_at: Optional[str] = None  # ISO-8601 with offset, or null
@@ -33,27 +43,30 @@ class Classification(BaseModel):
     reason: str = ""
 
 
-SYSTEM_PROMPT = """You are the triage layer of a personal assistant for the user named {owner}.
-You read ONE new WhatsApp message (with a little chat context) and decide what it means for {owner}.
+SYSTEM_PROMPT = """You are the triage layer of a personal assistant for {owner}.
+You read ONE new WhatsApp message (with recent chat context and the OPEN TASKS already tracked for this chat) and decide what it means for {owner}.
 
-Classify `kind` as exactly one of:
-- task: something {owner} must DO or DELIVER (a request to them, or a commitment they made: "I'll send it tomorrow").
-- event: something to be at, at a time (meeting, call, class, deadline moved to a time, "let's meet at 5").
-- question: someone is waiting on an ANSWER from {owner} that is not trivial to give.
-- fyi: information worth knowing but no action (results announced, links, updates).
-- noise: greetings, memes, forwards, chit-chat, group banter, acknowledgements ("ok", "👍").
+First pick `action`:
+- update: the message adds information to one of the OPEN TASKS listed (a due time, a detail, a change of plan, higher urgency). Set task_id. Fill only the fields that changed (due_at/details/priority/title), leave others empty.
+- complete: the message is evidence that one of the OPEN TASKS is done — e.g. {owner} says "sent"/"done"/"submitted", or {owner} sends the file/document/image that the task was about. Set task_id.
+- new: a NEW commitment / event / question for {owner} not already in OPEN TASKS.
+- none: nothing actionable (chit-chat, fyi, someone else's task, acknowledgements).
+
+If action is new (or update), also fill:
+- kind: task (something {owner} must DO/DELIVER — a request to them or a commitment they made), event (be somewhere at a time), question (someone waits on a non-trivial answer from {owner}), fyi, noise.
+- title: short imperative, <= 80 chars, in {owner}'s perspective ("Send project report to Prof. Kumar").
+- due_at: resolve relative times ("in 10 mins", "tomorrow", "Friday 5pm") against NOW ({now}, timezone {tz}) to ISO-8601 WITH offset. Date without time -> 18:00 local. Null if none.
+- people: names involved (use the sender names given).
+- priority: urgent only for same-day + explicitly urgent wording; high for within ~48h or exams/professors/deadlines; else normal; low for vague "sometime".
 
 Rules:
-- Only create task/event/question when it concerns {owner} specifically. A group message asking "someone" to do something is fyi unless {owner} is named, is clearly responsible, or replied agreeing.
-- If from_me is true, the message was SENT by {owner}: it is a task only if {owner} committed to something ("I'll do X"); otherwise noise/fyi.
-- `title`: short imperative, <= 80 chars, in {owner}'s perspective ("Send project report to Prof. Kumar").
-- `due_at`: resolve relative dates ("tomorrow", "Friday 5pm", "next week") against NOW ({now}, timezone {tz}) to an ISO-8601 datetime WITH offset. If a date but no time is given, use 18:00 local. Null if none.
-- `people`: names involved (sender, people mentioned). Use the sender name given.
-- `priority`: urgent only for same-day + explicitly urgent wording; high for within ~48h or exams/professors/deadlines; else normal; low for vague "sometime".
-- `confidence`: 0-1 that your kind is right. Be honest; ambiguous chit-chat should be low.
-- `reason`: one short sentence.
+- Only task/event/question that concern {owner} specifically. A group message asking "someone" is fyi unless {owner} is named, is clearly responsible, or replied agreeing.
+- If from_me is true, {owner} SENT it: it's `new` only if {owner} committed to something; it's `update`/`complete` if it relates to an open task; otherwise none.
+- Do NOT create a `new` task that duplicates an OPEN TASK — use update instead.
+- confidence: 0-1 that your action+kind is right. Be honest.
+- reason: one short sentence.
 
-Answer with ONLY a JSON object with keys: kind, title, details, due_at, people, priority, confidence, reason."""
+Answer with ONLY a JSON object with keys: action, task_id, kind, title, details, due_at, people, priority, confidence, reason."""
 
 
 def _fmt_context(ctx: list[Message]) -> str:
@@ -62,17 +75,37 @@ def _fmt_context(ctx: list[Message]) -> str:
         who = "ME" if m.from_me else (m.sender_name or m.sender_id.split("@")[0])
         t = m.sent_at.astimezone(ZoneInfo(settings.tz)).strftime("%a %d %b %H:%M")
         body = m.text or f"[{m.media_type}]"
-        lines.append(f"[{t}] {who}: {body}")
+        lines.append(f"[{t}] {who}: {body[:400]}")
     return "\n".join(lines) if lines else "(no earlier messages)"
 
 
-def build_messages(msg: Message, ctx: list[Message], owner: str) -> list[dict]:
+def _fmt_tasks(tasks: list[Task]) -> str:
+    if not tasks:
+        return "(none)"
+    out = []
+    for t in tasks:
+        due = t.due_at.astimezone(ZoneInfo(settings.tz)).strftime("%a %d %b %H:%M") if t.due_at and t.due_at.tzinfo \
+            else (t.due_at.strftime("%a %d %b %H:%M UTC") if t.due_at else "no due")
+        out.append(f"#{t.id} [{t.kind.value}, {t.status.value}] {t.title} — due {due}")
+    return "\n".join(out)
+
+
+def open_tasks_for_chat(session: Session, chat_id: str, limit: int = 8) -> list[Task]:
+    return list(session.exec(
+        select(Task).where(Task.chat_id == chat_id,
+                           Task.status.in_([TaskStatus.open, TaskStatus.pending_confirmation]))  # type: ignore[attr-defined]
+        .order_by(Task.created_at.desc()).limit(limit)
+    ).all())
+
+
+def build_messages(msg: Message, ctx: list[Message], tasks: list[Task], owner: str) -> list[dict]:
     tz = ZoneInfo(settings.tz)
     now = datetime.now(tz).strftime("%A %Y-%m-%d %H:%M %z")
     who = "ME" if msg.from_me else (msg.sender_name or msg.sender_id.split("@")[0])
     chat = f"group '{msg.chat_name}'" if msg.is_group else f"direct chat with {msg.chat_name or who}"
     user = (
         f"Chat: {chat}\n"
+        f"OPEN TASKS from this chat:\n{_fmt_tasks(tasks)}\n\n"
         f"Earlier messages:\n{_fmt_context(ctx)}\n\n"
         f"NEW MESSAGE from {who} (from_me={str(msg.from_me).lower()}) "
         f"at {msg.sent_at.astimezone(tz).strftime('%a %d %b %H:%M')}:\n{msg.text or f'[{msg.media_type}]'}"
@@ -98,8 +131,20 @@ def _parse_due(s: Optional[str]) -> Optional[datetime]:
     return dt
 
 
-async def classify_message(session: Session, msg: Message, owner: str = "the user") -> Optional[Task]:
-    """Classify one message; persist the raw result; create a Task if warranted."""
+def touch(task: Task) -> None:
+    task.updated_at = utcnow()
+
+
+class Outcome(BaseModel):
+    """What happened, for the notifier."""
+    action: str
+    task: Optional[Task] = None
+    changed: dict = {}
+
+    model_config = {"arbitrary_types_allowed": True}
+
+
+async def classify_message(session: Session, msg: Message, owner: str = "the user") -> Optional[Outcome]:
     ctx = session.exec(
         select(Message)
         .where(Message.chat_id == msg.chat_id, Message.id != msg.id, Message.sent_at <= msg.sent_at)
@@ -107,10 +152,12 @@ async def classify_message(session: Session, msg: Message, owner: str = "the use
         .limit(settings.context_window)
     ).all()
     ctx = list(reversed(ctx))
+    tasks = open_tasks_for_chat(session, msg.chat_id)
+    by_id = {t.id: t for t in tasks}
 
     llm = LLM(classifier_profile())
     try:
-        raw = await llm.complete_json(build_messages(msg, ctx, owner))
+        raw = await llm.complete_json(build_messages(msg, ctx, tasks, owner))
         result = Classification.model_validate(raw)
     except (ValidationError, ValueError, KeyError) as e:
         log.warning("classifier returned unusable output for msg %s: %s", msg.id, e)
@@ -124,8 +171,32 @@ async def classify_message(session: Session, msg: Message, owner: str = "the use
     msg.classification = result.model_dump_json()
     session.add(msg)
 
-    task: Optional[Task] = None
-    if result.kind in ("task", "event", "question") and result.confidence >= settings.classifier_min_confidence:
+    outcome: Optional[Outcome] = None
+    target = by_id.get(result.task_id) if result.task_id else None
+    conf_ok = result.confidence >= settings.classifier_min_confidence
+
+    if result.action == "complete" and target and conf_ok:
+        target.status = TaskStatus.done
+        touch(target)
+        session.add(target)
+        outcome = Outcome(action="complete", task=target)
+
+    elif result.action == "update" and target and conf_ok:
+        changed = {}
+        due = _parse_due(result.due_at)
+        if due and due != target.due_at:
+            target.due_at, changed["due_at"] = due, due
+        if result.details and result.details != target.details:
+            target.details, changed["details"] = result.details, result.details
+        if result.priority and result.priority != target.priority and result.priority != "normal":
+            target.priority, changed["priority"] = result.priority, result.priority
+        if changed:
+            touch(target)
+            session.add(target)
+            outcome = Outcome(action="update", task=target, changed=changed)
+
+    elif result.action in ("new", "update") and result.kind in ("task", "event", "question") and conf_ok:
+        # "update" with no valid target falls through to creating a task
         task = Task(
             kind=TaskKind(result.kind),
             status=TaskStatus.pending_confirmation,
@@ -136,27 +207,27 @@ async def classify_message(session: Session, msg: Message, owner: str = "the use
             people=", ".join(result.people) or None,
             confidence=result.confidence,
             source_message_id=msg.id,
+            chat_id=msg.chat_id,
         )
         session.add(task)
+        outcome = Outcome(action="new", task=task)
+
     session.commit()
-    if task:
-        session.refresh(task)
-        log.info("task #%s (%s, %.2f): %s", task.id, task.kind.value, task.confidence, task.title)
-    return task
+    if outcome and outcome.task:
+        session.refresh(outcome.task)
+        log.info("%s task #%s (%s, %.2f): %s", outcome.action, outcome.task.id, outcome.task.kind.value,
+                 result.confidence, outcome.task.title)
+    return outcome
 
 
-async def classify_pending(session: Session, owner: str = "the user", limit: int = 50) -> list[Task]:
+async def classify_pending(session: Session, owner: str = "the user", limit: int = 50) -> list[Outcome]:
     """Catch-up pass: classify anything ingested but not yet classified (e.g. after an outage)."""
     pending = session.exec(
         select(Message).where(Message.classified == False).order_by(Message.sent_at).limit(limit)  # noqa: E712
     ).all()
     out = []
     for m in pending:
-        t = await classify_message(session, m, owner)
-        if t:
-            out.append(t)
+        o = await classify_message(session, m, owner)
+        if o:
+            out.append(o)
     return out
-
-
-def touch(task: Task) -> None:
-    task.updated_at = utcnow()

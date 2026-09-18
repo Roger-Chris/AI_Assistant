@@ -62,6 +62,7 @@ class Task(SQLModel, table=True):
     people: Optional[str] = None  # comma-separated names
     confidence: float = 0.0
     source_message_id: Optional[int] = Field(default=None, foreign_key="message.id")
+    chat_id: Optional[str] = Field(default=None, index=True)  # which chat this came from
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
     notified: bool = False  # pushed to the phone yet?
@@ -113,8 +114,43 @@ engine = _make_engine()
 
 def init_db() -> None:
     SQLModel.metadata.create_all(engine)
+    _migrate_columns()
+
+
+def _migrate_columns() -> None:
+    """SQLite: create_all never adds columns to existing tables. Add any the models gained."""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    with engine.begin() as conn:
+        for table in SQLModel.metadata.sorted_tables:
+            if not insp.has_table(table.name):
+                continue
+            existing = {c["name"] for c in insp.get_columns(table.name)}
+            for col in table.columns:
+                if col.name not in existing:
+                    ctype = col.type.compile(engine.dialect)
+                    conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" {ctype}'))
 
 
 def get_session():
     with Session(engine) as session:
         yield session
+
+
+def backfill_chats() -> None:
+    """Populate the Chat table from stored messages if it's empty (first run after upgrade)."""
+    from sqlalchemy import func
+    from sqlmodel import select
+
+    with Session(engine) as session:
+        if session.exec(select(Chat).limit(1)).first():
+            return
+        rows = session.exec(
+            select(Message.chat_id, func.max(Message.chat_name), func.max(Message.is_group),
+                   func.count(Message.id), func.max(Message.sent_at)).group_by(Message.chat_id)
+        ).all()
+        for chat_id, name, is_group, n, last in rows:
+            session.add(Chat(chat_id=chat_id, name=name, is_group=bool(is_group), message_count=n,
+                             last_message_at=last))
+        session.commit()

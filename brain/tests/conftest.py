@@ -27,8 +27,10 @@ class FakeLLM:
     async def complete(self, messages, **kw):
         self.calls.append(messages)
         user = messages[-1]["content"]
+        # match only the NEW MESSAGE part, not the chat context (which repeats earlier texts)
+        user = user.split("NEW MESSAGE", 1)[-1]
         for key, resp in self.script.items():
-            if key in user:
+            if key.lower() in user.lower():
                 return "```json\n" + json.dumps(resp) + "\n```"  # fenced on purpose: parser must cope
         return json.dumps(self.default)
 

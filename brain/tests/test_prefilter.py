@@ -25,7 +25,7 @@ def test_group_gate():
 def test_muted_chat_is_stored_but_not_triaged(client, fake_llm):
     from tests.test_pipeline import wa
     chat = {"chat_id": "noisy@g.us", "chat_name": "Memes", "is_group": True}
-    fake_llm.script["submit the form"] = {"kind": "task", "title": "Submit form", "confidence": 0.9}
+    fake_llm.script["submit the form"] = {"action": "new", "kind": "task", "title": "Submit form", "confidence": 0.9}
     client.post("/ingest/whatsapp", json=wa("please submit the form by tomorrow", **chat))
     before = len(fake_llm.calls)
     # find the chat id via the Chat table and mute it

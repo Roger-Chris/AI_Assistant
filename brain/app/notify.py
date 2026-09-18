@@ -79,3 +79,23 @@ async def new_task(session: Session, task: Task, src: Message) -> None:
     task.notified = True
     session.add(task)
     session.commit()
+
+
+async def task_updated(session: Session, task: Task, changed: dict, src: Message) -> None:
+    bits = []
+    if "due_at" in changed:
+        bits.append(f"due {fmt_due(task)}")
+    if "priority" in changed:
+        bits.append(f"priority {task.priority}")
+    if "details" in changed:
+        bits.append(f"note: {str(changed['details'])[:120]}")
+    who = "you" if src.from_me else (src.sender_name or "them")
+    text = f"✏️ <b>{task.title}</b> — updated ({', '.join(bits)}) from {who}: “{(src.text or '')[:120].replace('<', '&lt;')}”"
+    await send(text, session, priority="low")
+
+
+async def task_completed(session: Session, task: Task, src: Message) -> None:
+    evidence = (src.text or f"[{src.media_type}]")[:120].replace("<", "&lt;")
+    text = f"✅ <b>{task.title}</b> — marked done\nEvidence: “{evidence}”"
+    buttons = [[{"text": "↩️ Not done, reopen", "callback_data": f"reopen:{task.id}"}]]
+    await send(text, session, buttons, priority="low")
