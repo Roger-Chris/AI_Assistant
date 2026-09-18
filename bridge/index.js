@@ -77,6 +77,15 @@ function unwrap(message) {
   return m || {};
 }
 
+function isForwarded(msg) {
+  const m = unwrap(msg.message);
+  for (const k of Object.keys(m || {})) {
+    const ci = m[k]?.contextInfo;
+    if (ci && (ci.isForwarded || (ci.forwardingScore || 0) > 0)) return true;
+  }
+  return false;
+}
+
 function extractContent(msg) {
   const m = unwrap(msg.message);
   if (m.conversation) return { text: m.conversation };
@@ -174,6 +183,7 @@ async function toPayload(sock, msg, { allowFetch = true } = {}) {
     is_group: isGroup,
     text: content.text || '',
     media_type: content.media_type || null,
+    forwarded: isForwarded(msg),
     timestamp: Number(msg.messageTimestamp),
     _content: content,
   };

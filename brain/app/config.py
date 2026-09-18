@@ -6,6 +6,9 @@ class Settings(BaseSettings):
 
     brain_token: str = "change-me"
     owner_name: str = "the user"  # how the classifier refers to you, e.g. "Kishaunjith"
+    owner_aliases: str = ""  # comma-separated nicknames / @number people use for you in chats
+    # groups: only send a message to the model if it mentions you or contains a task/time signal
+    group_keyword_gate: bool = True
     database_url: str = "sqlite:///./data/brain.db"
     media_dir: str = "./data/media"
     tz: str = "Asia/Kolkata"

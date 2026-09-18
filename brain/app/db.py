@@ -77,6 +77,18 @@ class Worker(SQLModel, table=True):
     last_seen: datetime = Field(default_factory=utcnow)
 
 
+class Chat(SQLModel, table=True):
+    """One row per WhatsApp chat. `muted` = keep storing for context, never triage."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    chat_id: str = Field(unique=True, index=True)
+    name: Optional[str] = None
+    is_group: bool = False
+    muted: bool = False
+    message_count: int = 0
+    last_message_at: Optional[datetime] = None
+
+
 class Note(SQLModel, table=True):
     """Free-form key/value scratch (e.g. telegram chat id discovered at runtime)."""
 

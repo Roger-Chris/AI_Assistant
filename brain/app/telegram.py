@@ -14,7 +14,7 @@ from sqlmodel import Session, select
 
 from .classifier import touch
 from .config import settings
-from .db import Note, Task, TaskStatus, engine
+from .db import Chat, Note, Task, TaskStatus, engine
 from .notify import fmt_due, tg
 
 log = logging.getLogger("brain.telegram")
@@ -62,8 +62,24 @@ async def _handle_message(m: dict) -> None:
                 reply = f"Done: {t.title}"
             except (IndexError, ValueError, AssertionError):
                 reply = "Usage: /done <id>"
+        elif text.startswith("/chats"):
+            chats = session.exec(select(Chat).order_by(Chat.message_count.desc()).limit(40)).all()  # type: ignore[attr-defined]
+            reply = "Chats by volume (id · name · msgs):\n" + "\n".join(
+                f"{'🔇 ' if c.muted else ''}{c.id} · {(c.name or c.chat_id.split('@')[0])[:32]} · {c.message_count}"
+                for c in chats) + "\n\n/mute <id>  /unmute <id>"
+        elif text.startswith(("/mute", "/unmute")):
+            try:
+                cid = int(text.split()[1])
+                c = session.get(Chat, cid)
+                assert c
+                c.muted = text.startswith("/mute")
+                session.add(c)
+                session.commit()
+                reply = f"{'Muted' if c.muted else 'Unmuted'}: {c.name or c.chat_id}"
+            except (IndexError, ValueError, AssertionError):
+                reply = "Usage: /mute <id> or /unmute <id> (ids from /chats)"
         else:
-            reply = "Commands: /tasks, /today, /done <id>. Chat comes in Phase 2."
+            reply = "Commands: /tasks, /today, /done <id>, /chats, /mute <id>, /unmute <id>. Chat comes in Phase 2."
     await tg("sendMessage", chat_id=chat_id, text=reply, parse_mode="HTML")
 
 

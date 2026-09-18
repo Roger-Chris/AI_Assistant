@@ -14,7 +14,8 @@ from sqlmodel import Session, select
 from ..auth import require_token
 from ..classifier import classify_message
 from ..config import settings
-from ..db import Message, engine, get_session
+from ..db import Chat, Message, engine, get_session
+from ..prefilter import prefilter
 from .. import notify
 
 log = logging.getLogger("brain.ingest")
@@ -35,7 +36,22 @@ class WhatsAppMessage(BaseModel):
     media_type: Optional[str] = None
     media_b64: Optional[str] = None  # voice notes, if FORWARD_AUDIO is on
     media_mime: Optional[str] = None
+    forwarded: bool = False
     timestamp: int  # unix seconds
+
+
+def touch_chat(session: Session, chat_id: str, name: Optional[str], is_group: bool,
+               sent_at: datetime, n: int = 1) -> Chat:
+    chat = session.exec(select(Chat).where(Chat.chat_id == chat_id)).first()
+    if not chat:
+        chat = Chat(chat_id=chat_id, is_group=is_group)
+    if name and not chat.name:
+        chat.name = name
+    chat.message_count += n
+    if not chat.last_message_at or sent_at > chat.last_message_at.replace(tzinfo=sent_at.tzinfo):
+        chat.last_message_at = sent_at
+    session.add(chat)
+    return chat
 
 
 async def _process(message_id: int) -> None:
@@ -92,17 +108,21 @@ async def ingest_whatsapp(payload: WhatsAppMessage, bg: BackgroundTasks,
         sent_at=datetime.fromtimestamp(payload.timestamp, tz=timezone.utc),
     )
     session.add(msg)
+    chat = touch_chat(session, payload.chat_id, payload.chat_name, payload.is_group, msg.sent_at)
     session.commit()
     session.refresh(msg)
 
-    # Skip the LLM entirely for obvious noise: empty text or pure media with no caption.
-    if text.strip() and not (payload.media_type and payload.media_type != "audio" and not payload.text):
-        bg.add_task(_process, msg.id)
-    else:
+    # Cheap gates before any model call: muted chat, then the rule-based pre-filter.
+    skip = "muted-chat" if chat.muted else prefilter(
+        text, is_group=payload.is_group, from_me=payload.from_me, forwarded=payload.forwarded,
+        media_type=payload.media_type)
+    if skip:
         msg.classified = True
-        msg.classification = '{"kind":"noise","reason":"empty/media-only, skipped"}'
+        msg.classification = f'{{"kind":"noise","reason":"prefilter:{skip}"}}'
         session.add(msg)
         session.commit()
+        return {"ok": True, "message_id": msg.id, "skipped": skip}
+    bg.add_task(_process, msg.id)
     return {"ok": True, "message_id": msg.id}
 
 
@@ -132,6 +152,7 @@ def ingest_history(batch: HistoryBatch, session: Session = Depends(get_session))
             classified=True, classification='{"kind":"history","reason":"backfilled, context only"}',
         ))
         added += 1
+        touch_chat(session, m.chat_id, m.chat_name, m.is_group, datetime.fromtimestamp(m.timestamp, tz=timezone.utc))
     # names arrive late for some groups (rate limits / later chunks): backfill rows that lack one
     names = {m.chat_id: m.chat_name for m in batch.messages if m.is_group and m.chat_name}
     for chat_id, name in names.items():
@@ -141,3 +162,54 @@ def ingest_history(batch: HistoryBatch, session: Session = Depends(get_session))
     session.commit()
     log.info("history batch: %d received, %d stored", len(batch.messages), added)
     return {"ok": True, "received": len(batch.messages), "stored": added}
+
+
+class Directory(BaseModel):
+    names: dict[str, str] = {}    # jid -> display name (groups and contacts)
+    aliases: dict[str, str] = {}  # lid jid -> phone-number jid
+
+
+@router.post("/whatsapp/directory")
+def ingest_directory(d: Directory, session: Session = Depends(get_session)) -> dict:
+    """Bridge sends what it knows about chats/contacts; we repair stored rows in place:
+    merge LID-addressed rows into their phone-number chat, and fill missing names."""
+    merged = renamed = 0
+    for lid, pn in d.aliases.items():
+        if lid == pn:
+            continue
+        for row in session.exec(select(Message).where(Message.chat_id == lid)).all():
+            row.chat_id = pn
+            merged += 1
+            session.add(row)
+        for row in session.exec(select(Message).where(Message.sender_id == lid)).all():
+            row.sender_id = pn
+            session.add(row)
+    session.flush()
+    for jid, name in d.names.items():
+        jid = d.aliases.get(jid, jid)
+        for row in session.exec(select(Message).where(Message.chat_id == jid, Message.chat_name.is_(None))).all():  # type: ignore[union-attr]
+            row.chat_name = name
+            renamed += 1
+            session.add(row)
+    for lid, pn in d.aliases.items():
+        c_lid = session.exec(select(Chat).where(Chat.chat_id == lid)).first()
+        if c_lid:
+            c_pn = session.exec(select(Chat).where(Chat.chat_id == pn)).first()
+            if c_pn:
+                c_pn.message_count += c_lid.message_count
+                c_pn.muted = c_pn.muted or c_lid.muted
+                session.delete(c_lid)
+                session.add(c_pn)
+            else:
+                c_lid.chat_id = pn
+                session.add(c_lid)
+    session.flush()
+    for jid, name in d.names.items():
+        c = session.exec(select(Chat).where(Chat.chat_id == d.aliases.get(jid, jid))).first()
+        if c and not c.name:
+            c.name = name
+            session.add(c)
+    session.commit()
+    log.info("directory: %d names, %d aliases -> %d rows merged, %d rows named",
+             len(d.names), len(d.aliases), merged, renamed)
+    return {"ok": True, "merged": merged, "renamed": renamed}
