@@ -15,12 +15,12 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal, Optional
 from zoneinfo import ZoneInfo
 
 from dateutil import parser as dateparser
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from sqlmodel import Session, select
 
 from .config import settings
@@ -42,13 +42,30 @@ class Classification(BaseModel):
     confidence: float = 0.0
     reason: str = ""
 
+    @field_validator("title", "details", "reason", mode="before")
+    @classmethod
+    def _none_to_blank(cls, v):
+        return "" if v is None else v
+
+    @field_validator("people", mode="before")
+    @classmethod
+    def _none_to_list(cls, v):
+        if v is None:
+            return []
+        return [v] if isinstance(v, str) else v
+
+    @field_validator("priority", mode="before")
+    @classmethod
+    def _default_priority(cls, v):
+        return v if v in ("low", "normal", "high", "urgent") else "normal"
+
 
 SYSTEM_PROMPT = """You are the triage layer of a personal assistant for {owner}.
 You read ONE new message — a WhatsApp message or an EMAIL — (with recent context and the OPEN TASKS already tracked for this chat/sender) and decide what it means for {owner}.
 
 First pick `action`:
 - update: the message adds information to one of the OPEN TASKS listed (a due time, a detail, a change of plan, higher urgency). Set task_id. Fill only the fields that changed (due_at/details/priority/title), leave others empty.
-- complete: the message is evidence that one of the OPEN TASKS is done — e.g. {owner} says "sent"/"done"/"submitted", or {owner} sends the file/document/image that the task was about. Set task_id.
+- complete: the message is evidence that one of the OPEN TASKS is done. Set task_id. Examples: {owner} says "sent"/"done"/"submitted"; {owner} sends the file the task was about; a CONFIRMATION arrives for something he was asked to do — "thank you for registering", "registration complete", "your application has been received", "payment successful", "your status is confirmed", "we have received your submission" — even when it comes from a different sender or address than the mail that asked for it. Match it to the task by what it is about, not by who sent it.
 - new: a NEW commitment / event / question for {owner} not already in OPEN TASKS.
 - none: nothing actionable (chit-chat, fyi, someone else's task, acknowledgements).
 
@@ -63,7 +80,12 @@ Rules:
 - Only task/event/question that concern {owner} specifically. A group message asking "someone" is fyi unless {owner} is named, is clearly responsible, or replied agreeing.
 - If from_me is true, {owner} SENT it: it's `new` only if {owner} committed to something; it's `update`/`complete` if it relates to an open task; otherwise none.
 - EXCEPTION — the SELF CHAT ("Chat: notes to self"): everything there is {owner} talking to you, the assistant. An instruction ("send me the SH files today", "remind me to pay fees") is a `task` for {owner}. A forwarded confirmation, screenshot, ticket or invite is an `event` (or task) with its date/time. Never dismiss self-chat messages as "sent to himself".
-- EMAIL rules (when the chat line says "email"): promotions are already filtered out. Surface as `task`: bills, fees, EMIs, payment reminders, renewals (title "Pay <what> ₹<amount>", due = due date, priority high), forms/registrations/deadlines from college or institutions, anything a real person asks {owner} to do. Surface as `event`: invitations, bookings, tickets, confirmations, meetings, exams, orientations (due = the event's start). Newsletters, digests, receipts for things already paid, OTPs, login alerts, shipping updates -> none. Include the amount and any reference number in `details`.
+- EMAIL rules (when the chat line says "email"). The bar is a RELATIONSHIP {owner} ALREADY HAS, not an offer. Ask: did {owner} sign up, apply, buy, owe, or get personally named? If not, it is `none` no matter how urgent it sounds.
+  Surface as `task`: bills, fees, EMIs, payment reminders, renewals for accounts {owner} holds (title "Pay <what> <amount>", due = the due date, priority high); a form / verification / submission {owner} started or his college requires; something a real person wrote to {owner} personally and is waiting on.
+  Surface as `event`: only an event {owner} is already committed to — he registered or applied, he is a named participant, or it is from his college / a programme he belongs to (due = the event's start).
+  `none` — even with a date, a deadline, "Action Required" or "Last chance": marketing webinars, masterclasses, info sessions, demos, open courses, career fairs and counselling invitations from consultancies, ed-tech, universities he has not applied to, or vendors; product announcements, deprecations, migration notices and feature news from services (including ones he uses) unless the mail names an account of his that will break on a date; job alerts, recommended-opportunity digests, social notifications, newsletters, contest promotions; receipts for things already paid, OTPs, login alerts, shipping updates.
+  A mail marked MASS MAIL was sent to a list, not to {owner} — for that, only an existing account, booking, registration, application or bill of his can become a task or event. "Join our event", "register now", "you are invited" in mass mail is `none`.
+  Include the amount and any reference number in `details`.
 - Do NOT create a `new` task that duplicates an OPEN TASK — use update instead.
 - confidence: 0-1 that your action+kind is right. Be honest.
 - reason: one short sentence.
@@ -88,16 +110,37 @@ def _fmt_tasks(tasks: list[Task]) -> str:
     for t in tasks:
         due = t.due_at.astimezone(ZoneInfo(settings.tz)).strftime("%a %d %b %H:%M") if t.due_at and t.due_at.tzinfo \
             else (t.due_at.strftime("%a %d %b %H:%M UTC") if t.due_at else "no due")
-        out.append(f"#{t.id} [{t.kind.value}, {t.status.value}] {t.title} — due {due}")
+        where = f" (from {t.chat_id.split(':')[-1]})" if t.chat_id and ":" in t.chat_id else ""
+        out.append(f"#{t.id} [{t.kind.value}, {t.status.value}] {t.title} — due {due}{where}")
     return "\n".join(out)
+
+
+_LIVE = [TaskStatus.open, TaskStatus.pending_confirmation, TaskStatus.watching]
 
 
 def open_tasks_for_chat(session: Session, chat_id: str, limit: int = 8) -> list[Task]:
     return list(session.exec(
-        select(Task).where(Task.chat_id == chat_id,
-                           Task.status.in_([TaskStatus.open, TaskStatus.pending_confirmation, TaskStatus.watching]))  # type: ignore[attr-defined]
+        select(Task).where(Task.chat_id == chat_id, Task.status.in_(_LIVE))  # type: ignore[attr-defined]
         .order_by(Task.created_at.desc()).limit(limit)
     ).all())
+
+
+def candidate_tasks(session: Session, msg: Message) -> list[Task]:
+    """What the model may update or complete: this chat first, then other recent open items from
+    the same source. A "thanks for registering" mail usually comes from a different address than
+    the one that asked you to register, so chat scope alone would never close it."""
+    tasks = open_tasks_for_chat(session, msg.chat_id)
+    seen = {t.id for t in tasks}
+    room = max(0, settings.cross_chat_task_candidates - len(tasks))
+    if room:
+        cutoff = utcnow() - timedelta(days=settings.cross_chat_task_days)
+        others = session.exec(
+            select(Task).join(Message, Task.source_message_id == Message.id)  # type: ignore[arg-type]
+            .where(Task.status.in_(_LIVE), Task.created_at >= cutoff, Message.source == msg.source)  # type: ignore[attr-defined]
+            .order_by(Task.created_at.desc()).limit(room + len(seen))
+        ).all()
+        tasks += [t for t in others if t.id not in seen][:room]
+    return tasks
 
 
 def build_messages(msg: Message, ctx: list[Message], tasks: list[Task], owner: str) -> list[dict]:
@@ -106,14 +149,15 @@ def build_messages(msg: Message, ctx: list[Message], tasks: list[Task], owner: s
     who = "ME" if msg.from_me else (msg.sender_name or msg.sender_id.split("@")[0])
     if msg.source == "email":
         acct = msg.chat_id.split(":")[1] if msg.chat_id.count(":") >= 2 else "primary"
-        chat = f"email to {owner}'s '{acct}' Gmail account, from {msg.sender_name} <{msg.sender_id}>"
+        bulk = " [MASS MAIL — sent to a list, not written to him]" if msg.is_bulk else ""
+        chat = f"email to {owner}'s '{acct}' Gmail account, from {msg.sender_name} <{msg.sender_id}>{bulk}"
     elif msg.is_self:
         chat = "notes to self (the owner's own 'message yourself' chat — instructions to the assistant)"
     else:
         chat = f"group '{msg.chat_name}'" if msg.is_group else f"direct chat with {msg.chat_name or who}"
     user = (
         f"Chat: {chat}\n"
-        f"OPEN TASKS from this chat:\n{_fmt_tasks(tasks)}\n\n"
+        f"OPEN TASKS you may update or complete:\n{_fmt_tasks(tasks)}\n\n"
         f"Earlier messages:\n{_fmt_context(ctx)}\n\n"
         f"NEW MESSAGE from {who} (from_me={str(msg.from_me).lower()}) "
         f"at {msg.sent_at.astimezone(tz).strftime('%a %d %b %H:%M')}:\n{msg.text or f'[{msg.media_type}]'}"
@@ -160,7 +204,7 @@ async def classify_message(session: Session, msg: Message, owner: str = "the use
         .limit(settings.context_window)
     ).all()
     ctx = list(reversed(ctx))
-    tasks = open_tasks_for_chat(session, msg.chat_id)
+    tasks = candidate_tasks(session, msg)
     by_id = {t.id: t for t in tasks}
 
     llm = LLM(classifier_profile())
@@ -212,6 +256,11 @@ async def classify_message(session: Session, msg: Message, owner: str = "the use
             outcome = Outcome(action="update", task=target, changed=changed)
 
     elif result.action in ("new", "update") and result.kind in ("task", "event", "question") and conf_ok:
+        due = _parse_due(result.due_at)
+        if result.kind == "event" and due and due < datetime.now(ZoneInfo("UTC")) - timedelta(hours=1):
+            log.info("dropping past event %r (due %s)", result.title[:60], due)
+            session.commit()
+            return None
         # "update" with no valid target falls through to creating a task
         task = Task(
             kind=TaskKind(result.kind),
@@ -219,7 +268,7 @@ async def classify_message(session: Session, msg: Message, owner: str = "the use
             else TaskStatus.pending_confirmation,
             title=result.title[:200] or (msg.text[:80] if msg.text else "Untitled"),
             details=result.details or None,
-            due_at=_parse_due(result.due_at),
+            due_at=due,
             priority=result.priority,
             people=", ".join(result.people) or None,
             confidence=result.confidence,

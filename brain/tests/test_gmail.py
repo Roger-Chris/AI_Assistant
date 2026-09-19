@@ -102,3 +102,48 @@ def test_poll_stores_filters_and_classifies(client, fake_llm, monkeypatch):
         if n:
             s.delete(n)
         s.commit()
+
+
+def test_bulk_gate_keeps_mine_drops_marketing():
+    """Real subjects from the first live poll."""
+    drop = [
+        ("Ananya Bhatt <ananya@unstop.com>", "10,000+ global courses just went flat-rate!", "Coursera Plus Offer"),
+        ("Google Cloud <cloudplatform-noreply@google.com>", "[Reminder] [Action Required] Transition your scripts and workflows to gcloud storage",
+         "gsutil is deprecated. Complete the migration before March 31, 2027."),
+        ("LinkedIn <notifications-noreply@linkedin.com>", "Kishore S recently posted", "shared a post"),
+        ("Indeed <alert@indeed.com>", "Project Lead @ Darsis software", "Your background in engineering"),
+        ("Unstop <no-reply@unstop.com>", "Earn stipend up to INR 25,000 per month!", "Recommended Opportunities"),
+    ]
+    for sender, subject, body in drop:
+        assert email_prefilter(sender, subject, body, True) == "email-bulk", subject
+    keep = [
+        ("HDFC <alerts@hdfcbank.net>", "Credit card statement", "Total amount due Rs 4,320 by 25/09"),
+        ("Unstop <no-reply@unstop.com>", "Registration Complete | Amazon ML Challenge 2026", "Your registration is confirmed"),
+        ("SheerID <verify@sheerid.com>", "Get verified for AWS Builder Center", "Complete your verification"),
+        ("Airtel <billing@airtel.com>", "Your e-bill for September", "Amount payable 599"),
+    ]
+    for sender, subject, body in keep:
+        assert email_prefilter(sender, subject, body, True) is None, subject
+
+
+def test_confirmation_from_another_sender_completes_the_task(client, fake_llm, monkeypatch):
+    """Register with one sender, get 'thanks for registering' from another -> complete."""
+    ask = FakeGmail([mail("r1", "Amazon ML <noreply@unstop.com>", "Complete your registration | Amazon ML Challenge",
+                          "Your registration is pending. Finish it by 25 Sep.")])
+    fake_llm.script["complete your registration"] = {"action": "new", "kind": "task",
+                                                     "title": "Finish Amazon ML Challenge registration",
+                                                     "confidence": 0.95}
+    monkeypatch.setitem(gmail._service_override, "reg", ask)
+    with Session(engine) as s:
+        asyncio.run(gmail.poll_account(s, "reg"))
+    tid = [t for t in client.get("/tasks").json() if t["title"] == "Finish Amazon ML Challenge registration"][0]["id"]
+
+    done = FakeGmail([mail("r2", "Unstop Team <team@unstop.in>", "Registered successfully for Amazon ML Challenge 2026",
+                           "Thank you for registering. Your registration is confirmed.", ts=1789760000)])
+    fake_llm.script["registered successfully"] = {"action": "complete", "task_id": tid, "confidence": 0.95}
+    monkeypatch.setitem(gmail._service_override, "reg2", done)
+    with Session(engine) as s:
+        asyncio.run(gmail.poll_account(s, "reg2"))
+    # the second sender saw the first sender's task in its candidate list
+    assert f"#{tid}" in fake_llm.calls[-1][-1]["content"]
+    assert [t for t in client.get("/tasks?status=done").json() if t["id"] == tid]

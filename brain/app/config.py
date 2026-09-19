@@ -48,6 +48,10 @@ class Settings(BaseSettings):
 
     # how many prior messages from the same chat to show the classifier
     context_window: int = 6
+    # extra open tasks from other chats/senders offered for update/complete (confirmations often
+    # arrive from a different address than the request)
+    cross_chat_task_candidates: int = 12
+    cross_chat_task_days: int = 14
 
 
 settings = Settings()

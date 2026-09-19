@@ -157,3 +157,26 @@ def test_question_is_watched_then_surfaced_or_closed(client, fake_llm, monkeypat
     with Session(engine) as s:
         t2 = s.exec(select(Task).where(Task.title == "Reply: where are you")).one()
         assert t2.status == TaskStatus.done
+
+
+def test_classifier_tolerates_null_fields(client, fake_llm):
+    """Gemini sometimes returns title/details/people as null — must not crash the message."""
+    fake_llm.script["null fields probe"] = {"action": "none", "kind": "noise", "title": None,
+                                            "details": None, "people": None, "priority": None,
+                                            "confidence": 0.9, "reason": None}
+    r = client.post("/ingest/whatsapp", json=wa("null fields probe please", chat_id="nul@s.whatsapp.net",
+                                                 sender_id="nul@s.whatsapp.net", chat_name="Nul"))
+    assert "skipped" not in r.json()
+    from sqlmodel import Session, select
+    from app.db import Message, engine
+    with Session(engine) as s:
+        m = s.exec(select(Message).where(Message.chat_id == "nul@s.whatsapp.net")).one()
+        assert m.classified and "error" not in (m.classification or "")
+
+
+def test_event_already_past_is_not_created(client, fake_llm):
+    fake_llm.script["webinar yesterday"] = {"action": "new", "kind": "event", "title": "Attend the webinar",
+                                            "due_at": "2020-01-01T10:00:00+05:30", "confidence": 0.95}
+    client.post("/ingest/whatsapp", json=wa("webinar yesterday, join us", chat_id="past@s.whatsapp.net",
+                                             sender_id="past@s.whatsapp.net", chat_name="Past"))
+    assert not [t for t in client.get("/tasks").json() if t["title"] == "Attend the webinar"]

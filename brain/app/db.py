@@ -28,6 +28,7 @@ class Message(SQLModel, table=True):
     from_me: bool = False
     is_group: bool = False
     is_self: bool = False  # the "message yourself" chat — notes / instructions to the assistant
+    is_bulk: bool = False  # email sent to a list (unsubscribe header / bulk sender)
     text: str = ""
     media_type: Optional[str] = None  # "audio" | "image" | "document" ...
     media_path: Optional[str] = None  # where we stored the bytes, if any

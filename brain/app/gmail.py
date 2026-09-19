@@ -29,8 +29,17 @@ _service_override: dict[str, Any] = {}  # tests: label -> fake service
 
 QUERY = "in:inbox -category:promotions -category:social -category:forums"
 _BULK_SENDER = re.compile(r"(no-?reply|noreply|do-?not-?reply|newsletter|notifications?|mailer|marketing|promo|info@|news@|updates?@)", re.I)
-_MONEY = re.compile(r"(₹|rs\.?\s?\d|inr|\$\s?\d|amount|due|invoice|bill|payment|emi|receipt|statement|fee|fees|renew|expire|"
-                    r"overdue|outstanding|ticket|booking|confirm|registration|invite|invitation|deadline|last date)", re.I)
+# Mass mail only gets through when it is about something Roger ALREADY has: money owed, or his own
+# booking / registration / application / account. Generic "register now", "you're invited",
+# "action required" is marketing and stays out.
+_MINE = re.compile(
+    r"(amount (due|payable)|payment (due|reminder|failed|received|overdue)|due date|overdue|outstanding"
+    r"|last date (to|for)|invoice|e-?bill|\bbill\b.{0,40}\bdue\b|\bdue (on|by)\b|statement"
+    r"|minimum due|\bemi\b|auto-?pay"
+    r"|your (?:\w+\s+){0,3}(booking|order|registration|application|ticket|admission|result|account|subscription"
+    r"|membership|verification|status|payment|policy|claim|appointment|interview|submission|enrolment"
+    r"|enrollment|seat|slot|refund|invoice|bill|fees?|dues?))", re.I)
+
 _TAG = re.compile(r"<[^>]+>")
 _WS = re.compile(r"[ \t]+")
 
@@ -74,10 +83,14 @@ def _headers(payload: dict) -> dict:
     return {h["name"].lower(): h["value"] for h in payload.get("headers", [])}
 
 
+def is_bulk(sender: str, has_unsubscribe: bool) -> bool:
+    return bool(_BULK_SENDER.search(sender) or has_unsubscribe)
+
+
 def email_prefilter(sender: str, subject: str, text: str, has_unsubscribe: bool) -> Optional[str]:
     """Drop bulk mail unless it looks like a bill, booking, event, deadline or a real request."""
     probe = f"{subject}\n{text[:1500]}"
-    if (_BULK_SENDER.search(sender) or has_unsubscribe) and not _MONEY.search(probe):
+    if (_BULK_SENDER.search(sender) or has_unsubscribe) and not _MINE.search(probe):
         return "email-bulk"
     if not subject and not text.strip():
         return "empty"
@@ -106,6 +119,7 @@ def parse(label: str, account_email: str, m: dict) -> tuple[Message, Optional[st
         is_group=False,
         text=text,
         media_type=None,
+        is_bulk=is_bulk(f"{name} {addr}", "list-unsubscribe" in h),
         sent_at=datetime.fromtimestamp(ts, tz=timezone.utc),
     )
     skip = email_prefilter(f"{name} {addr}", subject, body, "list-unsubscribe" in h)
