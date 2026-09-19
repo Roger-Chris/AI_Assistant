@@ -23,9 +23,12 @@ class FakeLLM:
         self.script: dict[str, dict] = {}
         self.calls: list[list[dict]] = []
         self.default = {"kind": "noise", "confidence": 0.9, "reason": "default"}
+        self.raw = None  # set to a string to return it verbatim (e.g. a truncated answer)
 
     async def complete(self, messages, **kw):
         self.calls.append(messages)
+        if self.raw is not None:
+            return self.raw
         user = messages[-1]["content"]
         # match only the NEW MESSAGE part, not the chat context (which repeats earlier texts)
         user = user.split("NEW MESSAGE", 1)[-1]

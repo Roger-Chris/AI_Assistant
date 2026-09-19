@@ -95,16 +95,75 @@ def planner_profile() -> Profile:
 _FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
 
 
+def salvage_json(text: str) -> Any:
+    """Parse JSON that the model cut off mid-array (it hit the token ceiling).
+
+    Walks the text tracking brackets and strings, remembers the last point where a complete
+    element ended, truncates there and closes what is still open. Losing the tail of a list
+    beats losing the whole answer."""
+    depth: list[str] = []
+    safe = -1
+    in_str = esc = False
+    for i, ch in enumerate(text):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in "[{":
+            depth.append(ch)
+        elif ch in "]}":
+            if depth:
+                depth.pop()
+            if depth:
+                safe = i + 1  # a complete element inside a container just ended
+    if safe <= 0:
+        raise ValueError("nothing salvageable")
+    head = text[:safe].rstrip().rstrip(",")
+    # close whatever is still open, innermost first
+    d: list[str] = []
+    in_str = esc = False
+    for ch in head:
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in "[{":
+            d.append(ch)
+        elif ch in "]}" and d:
+            d.pop()
+    return json.loads(head + "".join("]" if c == "[" else "}" for c in reversed(d)))
+
+
 def extract_json(text: str) -> Any:
-    """Tolerant JSON parse: strips code fences and leading/trailing prose."""
+    """Tolerant JSON parse: strips code fences, leading/trailing prose, and truncated tails."""
     cleaned = _FENCE.sub("", text.strip())
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError:
-        start, end = cleaned.find("{"), cleaned.rfind("}")
-        if start != -1 and end > start:
+        pass
+    start, end = cleaned.find("{"), cleaned.rfind("}")
+    if start != -1 and end > start:
+        try:
             return json.loads(cleaned[start : end + 1])
-        raise
+        except json.JSONDecodeError:
+            pass
+    if start != -1:
+        out = salvage_json(cleaned[start:])
+        log.warning("recovered a truncated JSON answer (%d chars) — raise max_tokens", len(cleaned))
+        return out
+    raise ValueError("no JSON object in the answer")
 
 
 def _is_quota_error(r: httpx.Response) -> bool:

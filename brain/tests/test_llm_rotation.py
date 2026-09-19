@@ -63,3 +63,22 @@ async def test_retries_transient_503_then_succeeds(monkeypatch):
     assert len(seen) == 3
     # a busy model must not bench the keys — both stay usable
     assert llm_mod._rings["t2"].cooling == {}
+
+
+def test_salvages_json_the_model_cut_off():
+    """Real failure: a resume produced more entities than max_tokens allowed, so the relations
+    array was cut mid-element and the whole answer was lost."""
+    from app.llm import extract_json
+    cut = ('{"entities": [{"name": "RIT", "kind": "org", "summary": "his college", "aliases": []},'
+           ' {"name": "Zapprise", "kind": "project", "summary": "co-founded", "aliases": []}],'
+           ' "relations": [["Roger", "studies_at", "RIT"], ["Roger", "works_on", "Zapp')
+    out = extract_json(cut)
+    assert [e["name"] for e in out["entities"]] == ["RIT", "Zapprise"]
+    assert out["relations"] == [["Roger", "studies_at", "RIT"]]  # the half-written one is dropped
+
+    # cut inside an entity object -> keep the entities that completed
+    cut2 = '{"entities": [{"name": "RIT", "kind": "org"}, {"name": "Zap", "kind": "proj'
+    assert [e["name"] for e in extract_json(cut2)["entities"]] == ["RIT"]
+
+    # a complete answer is untouched
+    assert extract_json('```json\n{"entities": [], "relations": []}\n```') == {"entities": [], "relations": []}

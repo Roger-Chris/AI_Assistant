@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     graph_daily_messages: int = 300   # most messages one nightly pass will read
     graph_daily_chunks: int = 6       # planner calls per nightly pass (cost ceiling)
     graph_hour: int = 3               # local hour the nightly pass runs
+    graph_max_tokens: int = 8000      # a CV with 15+ entities needs room; truncation loses relations
 
 
 settings = Settings()

@@ -96,3 +96,20 @@ def test_clean_summary_rejects_headings_and_preamble():
                                "Institute building robotics and IoT systems.") == (
         "Roger Christopher is a CSBS student at Rajalakshmi Institute building robotics and IoT systems.")
     assert graph.clean_summary("Roger is a CSBS student at RIT who builds drones and IoT devices.").startswith("Roger is a")
+
+
+def test_relations_survive_a_truncated_answer(fake_llm):
+    """The seed failure: the model hit the token ceiling mid-relations. Salvage must still
+    link what completed, and the drop must be logged rather than silent."""
+    wipe()
+    fake_llm.raw = ('{"entities": [{"name": "Rajalakshmi Institute of Technology", "kind": "org",'
+                    ' "summary": "his college", "aliases": ["RIT"]},'
+                    ' {"name": "Zapprise", "kind": "project", "summary": "co-founded venture", "aliases": []}],'
+                    ' "relations": [["Kishaunjith", "studies_at", "Rajalakshmi Institute of Technology"],'
+                    ' ["Kishaunjith", "works_on", "Zappr')
+    with Session(engine) as s:
+        res = asyncio.run(graph.extract(s, "cv", source="resume"))
+        assert res["entities"] == 2
+        assert res["relations"] == 1          # the completed one linked
+        o = graph.owner(s)
+        assert any("studies at Rajalakshmi" in r for r in graph._neighbours(s, o, limit=5))

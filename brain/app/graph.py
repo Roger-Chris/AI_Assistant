@@ -158,9 +158,10 @@ Rules:
 - Only entities with a real connection to {owner}: people he talks to or works with, organisations he belongs to or deals with, projects/competitions/programmes he works on, places he studies or works at.
 - Skip: companies that only market to him, news subjects, public figures he merely reads about, generic words ("college", "the team").
 - `name`: how {owner} would say it. `kind`: person | org | project | place | thing | event_series.
-- `summary`: ONE short line saying what this is TO HIM ("classmate, co-inventor on the water-metering patent"), not a general description. Leave "" if unsure.
+- `summary`: at most 12 words, saying what this is TO HIM ("classmate, co-inventor on the water-metering patent"), not a general description. Leave "" if unsure.
 - `relations`: [src, rel, dst] using names from your own entity list. Use these rels: works_on, member_of, studies_at, teaches_at, advisor_of, knows, colleague_of, organises, part_of, located_in, uses.
 - Prefer few, certain entities over many guesses. If nothing qualifies, return empty lists.
+- RELATIONS MATTER MOST: a list of names with no relations is useless. Give a relation for every entity you list, and always connect {owner} to the places he studies, the organisations he belongs to and the projects he works on. Use the exact names from your own entity list, and "{owner}" for him.
 
 Answer with ONLY JSON: {{"entities": [{{"name": "...", "kind": "...", "summary": "...", "aliases": ["..."]}}], "relations": [["src", "rel", "dst"]]}}
 
@@ -183,7 +184,7 @@ async def extract(session: Session, material: str, *, source: str = "derived",
     o = ensure_owner(session)
     prompt = EXTRACT_PROMPT.format(owner=settings.owner_name, material=material[:24000])
     try:
-        data = await _ask([{"role": "user", "content": prompt}], max_tokens=2000)
+        data = await _ask([{"role": "user", "content": prompt}], max_tokens=settings.graph_max_tokens)
     except Exception:  # noqa: BLE001
         log.exception("graph extraction failed")
         return {"entities": 0, "relations": 0}
@@ -222,15 +223,27 @@ async def extract(session: Session, material: str, *, source: str = "derived",
         return None
 
     rels = 0
-    for r in data.get("relations") or []:
+    dropped: list[str] = []
+    raw_rels = data.get("relations") or []
+    for r in raw_rels:
         if not (isinstance(r, (list, tuple)) and len(r) == 3):
+            dropped.append(f"malformed:{r!r:.40}")
             continue
         a, rel, b = (str(x) for x in r)
         ea, eb = find(a), find(b)
-        if ea and eb and link(session, ea, rel, eb, evidence_message_id=evidence_message_id):
+        if not ea or not eb:
+            dropped.append(f"{a} -{rel}-> {b} (unknown: {a if not ea else b})")
+            continue
+        if link(session, ea, rel, eb, evidence_message_id=evidence_message_id):
             rels += 1
     session.commit()
-    log.info("graph: +%d entities, +%d relations (%s)", len(by_name), rels, source)
+    log.info("graph: +%d entities, +%d relations from %d offered (%s)",
+             len(by_name), rels, len(raw_rels), source)
+    if dropped:
+        log.warning("graph: dropped %d relations: %s", len(dropped), "; ".join(dropped[:8]))
+    if by_name and not raw_rels:
+        log.warning("graph: the model returned entities but no relations — answer began: %.300s",
+                    json.dumps(data)[:300])
     return {"entities": len(by_name), "relations": rels}
 
 
