@@ -87,3 +87,12 @@ def test_extract_folds_entities_and_relations(fake_llm):
         # aliases let the college be found by its short name
         assert graph.describe(s, "SIST").startswith("<b>Sathyabama Institute</b>")
         assert "FactoryOS" in graph.to_mermaid(s)
+
+
+def test_clean_summary_rejects_headings_and_preamble():
+    assert graph.clean_summary("**Extract Key Information:**") is None
+    assert graph.clean_summary("Here is the sentence:") is None
+    assert graph.clean_summary("## Profile\n\n**Roger Christopher** is a CSBS student at Rajalakshmi "
+                               "Institute building robotics and IoT systems.") == (
+        "Roger Christopher is a CSBS student at Rajalakshmi Institute building robotics and IoT systems.")
+    assert graph.clean_summary("Roger is a CSBS student at RIT who builds drones and IoT devices.").startswith("Roger is a")

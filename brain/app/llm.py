@@ -12,6 +12,7 @@ limits are spread across all keys instead of one key hitting the wall.
 """
 from __future__ import annotations
 
+import asyncio
 import itertools
 import json
 import logging
@@ -27,6 +28,9 @@ from .config import settings
 log = logging.getLogger("brain.llm")
 
 COOLDOWN_SECONDS = 60.0
+TRANSIENT = {500, 502, 503, 504, 529}  # provider hiccups: retry, don't bench the key
+MAX_ATTEMPTS = 4
+BACKOFF_SECONDS = 1.5
 
 
 @dataclass
@@ -140,8 +144,9 @@ class LLM:
         url = p.base_url.rstrip("/") + "/chat/completions"
 
         last: Optional[httpx.Response] = None
+        attempts = max(len(ring), MAX_ATTEMPTS)
         async with httpx.AsyncClient(timeout=self.timeout) as client:
-            for attempt in range(len(ring)):
+            for attempt in range(attempts):
                 idx, key = ring.next()
                 headers = {"Authorization": f"Bearer {key}"}
                 if "openrouter" in p.base_url:
@@ -155,9 +160,21 @@ class LLM:
                 if _is_quota_error(r):
                     ring.penalise(idx)
                     log.warning("%s: key #%d rate-limited (%s); rotating (%d/%d)",
-                                p.name, idx + 1, r.status_code, attempt + 1, len(ring))
+                                p.name, idx + 1, r.status_code, attempt + 1, attempts)
                     last = r
                     continue
+                if r.status_code in TRANSIENT:
+                    # the model is busy, not the key — wait a little and try again
+                    last = r
+                    if attempt < attempts - 1:
+                        wait = BACKOFF_SECONDS * (2 ** attempt)
+                        log.warning("%s: HTTP %s from %s (busy); retrying in %.1fs (%d/%d)",
+                                    p.name, r.status_code, p.model, wait, attempt + 1, attempts)
+                        await asyncio.sleep(wait)
+                    continue
+                if r.status_code >= 400:
+                    log.error("%s: HTTP %s from %s model=%s: %s", p.name, r.status_code,
+                              p.base_url, p.model, r.text[:300])
                 r.raise_for_status()
                 data = r.json()
                 usage = data.get("usage", {})

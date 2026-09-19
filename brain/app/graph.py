@@ -25,7 +25,7 @@ from sqlmodel import Session, or_, select
 
 from .config import settings
 from .db import Edge, Entity, Mention, Message, Task, utcnow
-from .llm import LLM, planner_profile
+from .llm import LLM, classifier_profile, planner_profile
 
 log = logging.getLogger("brain.graph")
 
@@ -168,13 +168,22 @@ MATERIAL:
 {material}"""
 
 
+async def _ask(messages: list[dict], **kw):
+    """Planner first; if it is down or busy, the cheap model does this job well enough."""
+    try:
+        return await LLM(planner_profile()).complete_json(messages, **kw)
+    except Exception as e:  # noqa: BLE001
+        log.warning("planner unavailable for the graph (%s); falling back to the classifier model", e)
+        return await LLM(classifier_profile()).complete_json(messages, **kw)
+
+
 async def extract(session: Session, material: str, *, source: str = "derived",
                   evidence_message_id: Optional[int] = None) -> dict:
-    """Run the planner over some text and fold the result into the graph."""
+    """Run a model over some text and fold the result into the graph."""
     o = ensure_owner(session)
     prompt = EXTRACT_PROMPT.format(owner=settings.owner_name, material=material[:24000])
     try:
-        data = await LLM(planner_profile()).complete_json([{"role": "user", "content": prompt}], max_tokens=2000)
+        data = await _ask([{"role": "user", "content": prompt}], max_tokens=2000)
     except Exception:  # noqa: BLE001
         log.exception("graph extraction failed")
         return {"entities": 0, "relations": 0}
@@ -225,22 +234,51 @@ async def extract(session: Session, material: str, *, source: str = "derived",
     return {"entities": len(by_name), "relations": rels}
 
 
+_MD_EDGE = re.compile(r"^[\s>#*_`-]+|[\s*_`]+$")
+_MD_INLINE = re.compile(r"(\*\*|__|`)")
+
+
+def clean_summary(raw: str) -> Optional[str]:
+    """Models sometimes answer with a heading or a preamble ("**Extract Key Information:**").
+    Take the first line that reads like a sentence about a person, or give up."""
+    for line in (raw or "").splitlines():
+        line = _MD_INLINE.sub("", _MD_EDGE.sub("", line)).strip()
+        if len(line) < 25 or line.endswith(":"):
+            continue
+        low = line.lower()
+        if low.startswith(("here", "sure", "okay", "summary", "answer", "output", "json", "extract")):
+            continue
+        return line[:300]
+    return None
+
+
 async def seed_from_resume(session: Session, text: str) -> dict:
-    """One pass over the owner's CV. Also writes his own one-line summary."""
+    """One pass over the owner's CV. Also (re)writes his own one-line summary."""
     o = ensure_owner(session)
     res = await extract(session, f"{settings.owner_name}'s CV:\n\n{text}", source="resume")
-    if not o.summary:
+    try:
+        raw = await LLM(planner_profile()).complete(
+            [{"role": "user", "content": "Write ONE sentence, under 30 words, saying who this person is: "
+              "what they study, where, and the two or three things they are best known for. "
+              "Reply with the sentence only — no heading, no preamble, no markdown.\n\n"
+              f"{text[:12000]}"}], max_tokens=120)
+    except Exception as e:  # noqa: BLE001
+        log.warning("planner unavailable for the owner summary (%s); using the classifier model", e)
         try:
-            line = await LLM(planner_profile()).complete(
-                [{"role": "user", "content": "In ONE sentence under 30 words, say who this person is "
-                  "(what they study, where, and the two or three things they are known for). "
-                  f"Plain text only.\n\n{text[:12000]}"}], max_tokens=120)
-            o.summary = line.strip()[:300]
-            o.source = "resume"
-            session.add(o)
-            session.commit()
+            raw = await LLM(classifier_profile()).complete(
+                [{"role": "user", "content": "One sentence, under 30 words: who is this person? "
+                  f"Sentence only.\n\n{text[:12000]}"}], max_tokens=120)
         except Exception:  # noqa: BLE001
             log.exception("owner summary failed")
+            raw = ""
+    line = clean_summary(raw)
+    if line:
+        o.summary = line
+        o.source = "resume"
+        session.add(o)
+        session.commit()
+    else:
+        log.warning("owner summary unusable, left unchanged: %r", (raw or "")[:120])
     return res
 
 
