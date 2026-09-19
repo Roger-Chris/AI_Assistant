@@ -113,3 +113,37 @@ def test_relations_survive_a_truncated_answer(fake_llm):
         assert res["relations"] == 1          # the completed one linked
         o = graph.owner(s)
         assert any("studies at Rajalakshmi" in r for r in graph._neighbours(s, o, limit=5))
+
+
+def test_parenthetical_names_are_one_entity():
+    """The seed produced 'IIT PALS' and 'IIT PALS (IIT Madras)' as two orgs."""
+    wipe()
+    with Session(engine) as s:
+        a = graph.upsert_entity(s, name="IIT PALS", kind="org")
+        b = graph.upsert_entity(s, name="IIT PALS (IIT Madras)", kind="org")
+        s.commit()
+        assert a.id == b.id
+        assert a.name == "IIT PALS"
+        assert "iit-madras" in a.aliases
+        # and the bracketed form is findable
+        assert graph.describe(s, "IIT Madras").startswith("<b>IIT PALS</b>")
+
+
+def test_merge_duplicates_folds_older_rows(fake_llm):
+    """Rows written before the rule existed still merge, keeping edges."""
+    wipe()
+    with Session(engine) as s:
+        o = graph.ensure_owner(s)
+        keep = graph.upsert_entity(s, name="Indian Space Association", kind="org")
+        s.commit()
+        dup = Entity(kind="org", key="indian-space-association-isa", name="Indian Space Association (ISA)",
+                     summary="internship")
+        s.add(dup)
+        s.commit()
+        graph.link(s, o, "member_of", dup)
+        s.commit()
+        assert graph.merge_duplicates(s) == 1
+        s.expire_all()
+        assert len(s.exec(__import__("sqlmodel").select(Entity)).all()) == 2  # owner + the one org
+        assert any("member of Indian Space Association" in r for r in graph._neighbours(s, o, limit=5))
+        assert s.get(Entity, keep.id).summary == "internship"

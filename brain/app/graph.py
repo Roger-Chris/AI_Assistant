@@ -32,10 +32,22 @@ log = logging.getLogger("brain.graph")
 KINDS = {"person", "org", "project", "place", "thing", "event_series"}
 _SLUG = re.compile(r"[^a-z0-9]+")
 _TITLE_NOISE = re.compile(r"\s*\((mail|whatsapp)\)\s*$", re.I)
+# "Indian Space Association (ISA)" and "IIT PALS (IIT Madras)" are the same things the model
+# wrote twice: the bracketed part is an abbreviation or an expansion, so it is an alias.
+_PAREN = re.compile(r"\s*[\(\[]([^)\]]{1,40})[\)\]]\s*$")
+
+
+def split_paren(name: str) -> tuple[str, Optional[str]]:
+    base = _TITLE_NOISE.sub("", name or "").strip()
+    m = _PAREN.search(base)
+    if not m:
+        return base, None
+    return base[: m.start()].strip(), m.group(1).strip()
 
 
 def slug(name: str) -> str:
-    return _SLUG.sub("-", _TITLE_NOISE.sub("", name or "").strip().lower()).strip("-")[:80]
+    base, _ = split_paren(name)
+    return _SLUG.sub("-", base.lower()).strip("-")[:80]
 
 
 # ---------------------------------------------------------------- store
@@ -45,6 +57,9 @@ def upsert_entity(session: Session, *, name: str, kind: str = "person", summary:
     key = slug(name)
     if not key or kind not in KINDS:
         return None
+    base, paren = split_paren(name)
+    aliases = list(aliases) + ([paren] if paren else [])
+    name = base or name
     e = session.exec(select(Entity).where(Entity.key == key)).first()
     if not e:
         # an alias of something we already know?
@@ -85,6 +100,47 @@ def link(session: Session, src: Entity, rel: str, dst: Entity, note: Optional[st
                  evidence_message_id=evidence_message_id)
     session.add(e)
     return e
+
+
+def merge_duplicates(session: Session) -> int:
+    """Fold entities that now slug to the same key into the oldest one, moving their edges and
+    mentions across. Safe to run repeatedly."""
+    groups: dict[str, list[Entity]] = {}
+    for e in session.exec(select(Entity).order_by(Entity.id)).all():  # type: ignore[union-attr]
+        groups.setdefault(slug(e.name), []).append(e)
+    merged = 0
+    for key, rows in groups.items():
+        if len(rows) < 2:
+            continue
+        keep = next((r for r in rows if r.is_owner), rows[0])
+        for drop in rows:
+            if drop.id == keep.id:
+                continue
+            for edge in session.exec(select(Edge).where(or_(Edge.src_id == drop.id, Edge.dst_id == drop.id))).all():
+                edge.src_id = keep.id if edge.src_id == drop.id else edge.src_id
+                edge.dst_id = keep.id if edge.dst_id == drop.id else edge.dst_id
+                if edge.src_id == edge.dst_id:
+                    session.delete(edge)
+                else:
+                    session.add(edge)
+            for m in session.exec(select(Mention).where(Mention.entity_id == drop.id)).all():
+                m.entity_id = keep.id
+                session.add(m)
+            known = [a for a in keep.aliases.split(",") if a]
+            for a in [drop.key] + drop.aliases.split(","):
+                if a and a != keep.key and a not in known:
+                    known.append(a)
+            keep.aliases = ",".join(known[:20])
+            keep.summary = keep.summary or drop.summary
+            keep.mention_count += drop.mention_count
+            keep.key = key
+            session.add(keep)
+            session.delete(drop)
+            merged += 1
+    if merged:
+        session.commit()
+        log.info("graph: merged %d duplicate entities", merged)
+    return merged
 
 
 def owner(session: Session) -> Optional[Entity]:
@@ -268,7 +324,9 @@ def clean_summary(raw: str) -> Optional[str]:
 async def seed_from_resume(session: Session, text: str) -> dict:
     """One pass over the owner's CV. Also (re)writes his own one-line summary."""
     o = ensure_owner(session)
+    merge_duplicates(session)
     res = await extract(session, f"{settings.owner_name}'s CV:\n\n{text}", source="resume")
+    merge_duplicates(session)
     try:
         raw = await LLM(planner_profile()).complete(
             [{"role": "user", "content": "Write ONE sentence, under 30 words, saying who this person is: "
