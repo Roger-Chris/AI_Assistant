@@ -103,8 +103,12 @@ def link(session: Session, src: Entity, rel: str, dst: Entity, note: Optional[st
 
 
 def merge_duplicates(session: Session) -> int:
-    """Fold entities that now slug to the same key into the oldest one, moving their edges and
-    mentions across. Safe to run repeatedly."""
+    """Fold entities that now slug to the same key into one, moving their edges and mentions
+    across. Safe to run repeatedly.
+
+    Order matters: the survivor's `key` can only be changed once the duplicate holding that key
+    is gone, or the UPDATE trips the unique index. So deletes are flushed first, the rename last.
+    """
     groups: dict[str, list[Entity]] = {}
     for e in session.exec(select(Entity).order_by(Entity.id)).all():  # type: ignore[union-attr]
         groups.setdefault(slug(e.name), []).append(e)
@@ -112,31 +116,41 @@ def merge_duplicates(session: Session) -> int:
     for key, rows in groups.items():
         if len(rows) < 2:
             continue
-        keep = next((r for r in rows if r.is_owner), rows[0])
-        for drop in rows:
-            if drop.id == keep.id:
-                continue
-            for edge in session.exec(select(Edge).where(or_(Edge.src_id == drop.id, Edge.dst_id == drop.id))).all():
-                edge.src_id = keep.id if edge.src_id == drop.id else edge.src_id
-                edge.dst_id = keep.id if edge.dst_id == drop.id else edge.dst_id
-                if edge.src_id == edge.dst_id:
-                    session.delete(edge)
-                else:
-                    session.add(edge)
-            for m in session.exec(select(Mention).where(Mention.entity_id == drop.id)).all():
-                m.entity_id = keep.id
-                session.add(m)
-            known = [a for a in keep.aliases.split(",") if a]
-            for a in [drop.key] + drop.aliases.split(","):
-                if a and a != keep.key and a not in known:
-                    known.append(a)
-            keep.aliases = ",".join(known[:20])
-            keep.summary = keep.summary or drop.summary
-            keep.mention_count += drop.mention_count
-            keep.key = key
+        # prefer the owner, then whoever already holds the target key (no rename needed at all)
+        keep = (next((r for r in rows if r.is_owner), None)
+                or next((r for r in rows if r.key == key), None)
+                or rows[0])
+        drops = [r for r in rows if r.id != keep.id]
+        with session.no_autoflush:
+            for drop in drops:
+                for edge in session.exec(
+                        select(Edge).where(or_(Edge.src_id == drop.id, Edge.dst_id == drop.id))).all():
+                    edge.src_id = keep.id if edge.src_id == drop.id else edge.src_id
+                    edge.dst_id = keep.id if edge.dst_id == drop.id else edge.dst_id
+                    if edge.src_id == edge.dst_id:
+                        session.delete(edge)
+                    else:
+                        session.add(edge)
+                for m in session.exec(select(Mention).where(Mention.entity_id == drop.id)).all():
+                    m.entity_id = keep.id
+                    session.add(m)
+                known = [a for a in keep.aliases.split(",") if a]
+                for a in [drop.key] + drop.aliases.split(","):
+                    if a and a != key and a not in known:
+                        known.append(a)
+                keep.aliases = ",".join(known[:20])
+                keep.summary = keep.summary or drop.summary
+                keep.mention_count += drop.mention_count
+                if len(keep.name) > len(drop.name):
+                    keep.name = drop.name  # the shorter spelling is the plain one
+                session.add(keep)
+                session.delete(drop)
+                merged += 1
+        session.flush()          # the duplicates go first...
+        if keep.key != key:
+            keep.key = key       # ...only then is the key free to take
             session.add(keep)
-            session.delete(drop)
-            merged += 1
+            session.flush()
     if merged:
         session.commit()
         log.info("graph: merged %d duplicate entities", merged)

@@ -147,3 +147,40 @@ def test_merge_duplicates_folds_older_rows(fake_llm):
         assert len(s.exec(__import__("sqlmodel").select(Entity)).all()) == 2  # owner + the one org
         assert any("member of Indian Space Association" in r for r in graph._neighbours(s, o, limit=5))
         assert s.get(Entity, keep.id).summary == "internship"
+
+
+def test_merge_when_the_survivor_must_be_renamed(fake_llm):
+    """Covers the RESULT of the merge that crashed in production (two parenthetical duplicates).
+
+    Note: the crash itself was a flush-ordering IntegrityError that only reproduces against the
+    real database — a synthetic fixture flushes in a different order and passes either way. The
+    fix was verified by running merge_duplicates over a copy of the live brain.db, which raised
+    `UNIQUE constraint failed: entity.key` before and merged 18 -> 16 after. What this test pins
+    down is that the survivor keeps the plain name, the aliases and the edges."""
+    wipe()
+    from sqlmodel import select
+    with Session(engine) as s:
+        o = graph.ensure_owner(s)
+        # each pair: the bracketed spelling created FIRST, so the survivor must take the other key
+        a1 = Entity(kind="org", key="iit-pals-iit-madras", name="IIT PALS (IIT Madras)",
+                    summary="game development internship")
+        b1 = Entity(kind="org", key="indian-space-association-isa", name="Indian Space Association (ISA)",
+                    summary="India Space Week internship")
+        s.add(a1)
+        s.add(b1)
+        s.commit()
+        graph.link(s, o, "member_of", a1)
+        graph.link(s, o, "member_of", b1)
+        s.commit()
+        s.add(Entity(kind="org", key="iit-pals", name="IIT PALS"))
+        s.add(Entity(kind="org", key="indian-space-association", name="Indian Space Association"))
+        s.commit()
+
+        assert graph.merge_duplicates(s) == 2          # no IntegrityError
+
+        rows = sorted((e for e in s.exec(select(Entity)).all() if not e.is_owner), key=lambda e: e.key)
+        assert [e.key for e in rows] == ["iit-pals", "indian-space-association"]
+        assert [e.name for e in rows] == ["IIT PALS", "Indian Space Association"]  # plain spelling wins
+        assert rows[0].summary == "game development internship"
+        assert any("member of IIT PALS" in r for r in graph._neighbours(s, o, limit=6))
+        assert graph.describe(s, "IIT Madras").startswith("<b>IIT PALS</b>")
