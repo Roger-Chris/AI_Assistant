@@ -82,3 +82,30 @@ def test_salvages_json_the_model_cut_off():
 
     # a complete answer is untouched
     assert extract_json('```json\n{"entities": [], "relations": []}\n```') == {"entities": [], "relations": []}
+
+
+@pytest.mark.asyncio
+async def test_usage_report_counts_every_key(monkeypatch):
+    """The AI Studio dashboard is per Google Cloud project, so it cannot answer 'is the
+    rotation working'. The ring counts calls itself."""
+    llm_mod.LLM.override = None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": [{"message": {"content": "{}"}}],
+                                         "usage": {"prompt_tokens": 10, "completion_tokens": 5}})
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient",
+                        lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    llm_mod._rings.clear()
+    monkeypatch.setattr(llm_mod.settings, "classifier_api_keys", "kA,kB,kC")
+    monkeypatch.setattr(llm_mod.settings, "planner_api_keys", "")
+    monkeypatch.setattr(llm_mod.settings, "planner_api_key", "")
+    llm = LLM(llm_mod.classifier_profile())
+    for _ in range(6):
+        await llm.complete_json([{"role": "user", "content": "hi"}])
+    ring = llm_mod._rings["classifier"]
+    assert ring.calls == {0: 2, 1: 2, 2: 2}
+    assert ring.tokens == {0: 30, 1: 30, 2: 30}
+    report = llm_mod.usage_report()
+    assert "2 calls, 30 tokens" in report and report.count("calls") == 3

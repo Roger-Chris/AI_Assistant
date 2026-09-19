@@ -8,8 +8,8 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlmodel import Session, select
 
-from .classifier import classify_pending, touch
 from . import gcal, gmail, graph
+from .classifier import classify_pending, touch
 from .config import settings
 from .db import Message, Task, TaskStatus, engine
 from .llm import LLM, planner_profile

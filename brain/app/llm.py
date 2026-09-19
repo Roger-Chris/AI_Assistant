@@ -48,6 +48,10 @@ class KeyRing:
         self.keys = [k for k in keys if k]
         self._cycle = itertools.cycle(range(len(self.keys))) if self.keys else None
         self.cooling: dict[int, float] = {}
+        # the AI Studio dashboard is per Google Cloud project, so keys from different projects
+        # never show up on one page. Count here instead: this is the honest per-key tally.
+        self.calls: dict[int, int] = {}
+        self.tokens: dict[int, int] = {}
 
     def __len__(self) -> int:
         return len(self.keys)
@@ -66,6 +70,10 @@ class KeyRing:
 
     def penalise(self, i: int, seconds: float = COOLDOWN_SECONDS) -> None:
         self.cooling[i] = time.monotonic() + seconds
+
+    def record(self, i: int, tokens: int) -> None:
+        self.calls[i] = self.calls.get(i, 0) + 1
+        self.tokens[i] = self.tokens.get(i, 0) + tokens
 
 
 _rings: dict[str, KeyRing] = {}
@@ -237,6 +245,7 @@ class LLM:
                 r.raise_for_status()
                 data = r.json()
                 usage = data.get("usage", {})
+                ring.record(idx, (usage.get("prompt_tokens") or 0) + (usage.get("completion_tokens") or 0))
                 log.info("llm %s model=%s key=#%d in=%s out=%s", p.name, p.model, idx + 1,
                          usage.get("prompt_tokens"), usage.get("completion_tokens"))
                 return data["choices"][0]["message"]["content"]
@@ -247,3 +256,24 @@ class LLM:
     async def complete_json(self, messages: list[dict], **kw) -> Any:
         text = await self.complete(messages, json_mode=True, **kw)
         return extract_json(text)
+
+
+def usage_report() -> str:
+    """Per-key call and token counts since the brain last started. Answers "is rotation
+    actually spreading the load", which the AI Studio dashboard cannot: it is scoped to one
+    Google Cloud project, so keys from other projects look unused there."""
+    if not _rings:
+        return "No model calls yet."
+    now = time.monotonic()
+    out = []
+    for prof in (classifier_profile(), planner_profile()):
+        ring = _rings.get(prof.name)
+        if not ring or not len(ring):
+            continue
+        rows = []
+        for i in range(len(ring)):
+            cool = ring.cooling.get(i, 0) - now
+            rows.append(f"  #{i + 1} {ring.keys[i][-6:]}: {ring.calls.get(i, 0)} calls, "
+                        f"{ring.tokens.get(i, 0)} tokens" + (f" (cooling {cool:.0f}s)" if cool > 0 else ""))
+        out.append(f"{prof.name} ({prof.model}), {len(ring)} keys:\n" + "\n".join(rows))
+    return "\n\n".join(out) or "No model calls yet."

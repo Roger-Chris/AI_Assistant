@@ -28,5 +28,11 @@ pythonpath = ["."]
 [tool.ruff]
 line-length = 100
 
+[tool.ruff.lint]
+# pinned explicitly: ruff's defaults drift between releases and a lint run that changes
+# meaning on its own is a lint run nobody reads
+select = ["E4", "E7", "E9", "F", "I", "B"]
+ignore = ["B008"]  # Depends(...) in a default is FastAPI's own idiom
+
 [tool.setuptools.packages.find]
 include = ["app*"]

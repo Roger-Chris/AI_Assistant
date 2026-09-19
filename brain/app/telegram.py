@@ -76,6 +76,9 @@ async def _handle_message(m: dict) -> None:
             o = graph.owner(session)
             reply = (f"Memory graph: {kinds}; {st['relations']} links.\n"
                      + (f"\nYou: {o.summary}" if o and o.summary else "\nNo profile yet — seed it from your CV."))
+        elif text.startswith("/keys"):
+            from .llm import usage_report
+            reply = "<pre>" + usage_report() + "</pre>"
         elif text.startswith("/chats"):
             chats = session.exec(select(Chat).order_by(Chat.message_count.desc()).limit(40)).all()  # type: ignore[attr-defined]
             reply = "Chats by volume (id · name · msgs):\n" + "\n".join(
@@ -94,7 +97,7 @@ async def _handle_message(m: dict) -> None:
                 reply = "Usage: /mute <id> or /unmute <id> (ids from /chats)"
         else:
             reply = ("Commands: /tasks, /today, /brief, /done &lt;id&gt;, /chats, /mute &lt;id&gt;, /unmute &lt;id&gt;, "
-                     "/who &lt;name&gt;, /graph. Chat comes in Phase 2.")
+                     "/who &lt;name&gt;, /graph, /keys. Chat comes in Phase 2.")
     await tg("sendMessage", chat_id=chat_id, text=reply, parse_mode="HTML")
 
 

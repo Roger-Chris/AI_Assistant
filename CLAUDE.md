@@ -90,6 +90,12 @@ merge is worse than a duplicate.
 - `groupMetadata` per message hits WhatsApp's rate limit; fetch all group names once on connect.
 - Telegram long-poll passes `timeout=25`, so the HTTP client needs a longer timeout than that.
 - httpx's INFO log line contains the bot token — its logger is pinned to WARNING.
+- gemini-3.x spends most of a small `max_tokens` budget on thinking tokens, so a 120-token cap
+  returned half a sentence ("Roger Christopher is a Computer"). Summary calls get 600, and
+  `clean_summary` rejects a short line with no full stop rather than storing the stump.
+- The AI Studio usage dashboard is scoped to one Google Cloud project, so keys created in other
+  projects look unused there. `/keys` in Telegram reports the real per-key tally.
+- `ruff`'s default rule set drifts between releases; `[tool.ruff.lint] select` is pinned.
 
 ## Current state and next steps
 

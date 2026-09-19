@@ -9,6 +9,7 @@ from app.db import Entity, Message, engine, utcnow
 
 def wipe():
     from sqlmodel import select
+
     from app.db import Edge, Mention
     with Session(engine) as s:
         for model in (Mention, Edge, Entity):
@@ -184,3 +185,46 @@ def test_merge_when_the_survivor_must_be_renamed(fake_llm):
         assert rows[0].summary == "game development internship"
         assert any("member of IIT PALS" in r for r in graph._neighbours(s, o, limit=6))
         assert graph.describe(s, "IIT Madras").startswith("<b>IIT PALS</b>")
+
+
+def test_clean_summary_rejects_a_sentence_the_model_cut_off(fake_llm):
+    """The real seed wrote 'Roger Christopher is a Computer': gemini-3.x spends a small
+    max_tokens budget on thinking, so the visible answer stopped mid-noun."""
+    assert graph.clean_summary("Roger Christopher is a Computer") is None
+    # a long line without a full stop is a stylistic choice, not a truncation
+    assert graph.clean_summary(
+        "Roger Christopher is a CSBS student at Rajalakshmi Institute who builds drones, "
+        "IoT devices and an OCR pipeline") is not None
+
+
+def test_seed_keeps_the_old_summary_when_every_model_truncates(fake_llm):
+    wipe()
+    fake_llm.raw = '{"entities": [], "relations": []}'
+    with Session(engine) as s:
+        o = graph.ensure_owner(s)
+        o.summary = "a good line written earlier."
+        s.add(o)
+        s.commit()
+        fake_llm.raw = "Roger Christopher is a Computer"
+        asyncio.run(graph.seed_from_resume(s, "a resume " * 60))
+        assert graph.owner(s).summary == "a good line written earlier."
+
+
+def test_a_method_suffix_is_the_same_project(fake_llm):
+    """The CV seed created both 'Climate and Disease Prediction System' and the same name
+    with 'using LSTM' appended."""
+    assert graph.slug("Climate and Disease Prediction System using LSTM") == \
+        graph.slug("Climate and Disease Prediction System")
+    # but a name that is mostly its qualifier must survive intact
+    assert graph.slug("Digital Microscope from a Recycled Webcam") != graph.slug("Digital Microscope")
+    assert graph.slug("OCR using Python") == graph.slug("OCR using Python")
+
+    wipe()
+    with Session(engine) as s:
+        graph.upsert_entity(s, name="Climate and Disease Prediction System using LSTM", kind="project")
+        graph.upsert_entity(s, name="Climate and Disease Prediction System", kind="project")
+        s.commit()
+        assert graph.merge_duplicates(s) >= 0
+        from sqlmodel import select
+        names = [e.name for e in s.exec(select(Entity)).all() if e.kind == "project"]
+        assert len(names) == 1

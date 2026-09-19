@@ -9,7 +9,7 @@ from fastapi import FastAPI
 
 from . import scheduler, telegram
 from .config import settings
-from .db import init_db
+from .db import backfill_chats, init_db
 from .routers import ingest, tasks, workers
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -20,6 +20,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)  # its INFO lines include t
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    backfill_chats()
     scheduler.start()
     poller = asyncio.create_task(telegram.poll_forever())
     log.info("brain up — classifier=%s planner=%s tz=%s", settings.classifier_model,

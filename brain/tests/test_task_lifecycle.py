@@ -116,7 +116,9 @@ def test_self_chat_note_becomes_task(client, fake_llm):
 def test_question_is_watched_then_surfaced_or_closed(client, fake_llm, monkeypatch):
     import asyncio
     from datetime import timedelta
+
     from sqlmodel import Session, select
+
     from app import scheduler as sched
     from app.db import Task, TaskStatus, engine, utcnow
     sent = []
@@ -168,6 +170,7 @@ def test_classifier_tolerates_null_fields(client, fake_llm):
                                                  sender_id="nul@s.whatsapp.net", chat_name="Nul"))
     assert "skipped" not in r.json()
     from sqlmodel import Session, select
+
     from app.db import Message, engine
     with Session(engine) as s:
         m = s.exec(select(Message).where(Message.chat_id == "nul@s.whatsapp.net")).one()

@@ -11,12 +11,12 @@ from fastapi import APIRouter, BackgroundTasks, Depends
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from .. import notify, perceive
 from ..auth import require_token
 from ..classifier import classify_message, open_tasks_for_chat
 from ..config import settings
-from ..db import Chat, Message, engine, get_session, TaskStatus
+from ..db import Chat, Message, TaskStatus, engine, get_session
 from ..prefilter import prefilter
-from .. import notify, perceive
 
 log = logging.getLogger("brain.ingest")
 router = APIRouter(prefix="/ingest", tags=["ingest"], dependencies=[Depends(require_token)])

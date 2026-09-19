@@ -30,6 +30,7 @@ def test_muted_chat_is_stored_but_not_triaged(client, fake_llm):
     before = len(fake_llm.calls)
     # find the chat id via the Chat table and mute it
     from sqlmodel import Session, select
+
     from app.db import Chat, engine
     with Session(engine) as s:
         c = s.exec(select(Chat).where(Chat.chat_id == "noisy@g.us")).one()
