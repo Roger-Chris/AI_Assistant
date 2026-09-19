@@ -70,6 +70,19 @@ classifier sees for new messages and the raw material for the memory graph later
 arrives when a device links, so to (re)enable it: unlink the bridge in WhatsApp → Linked devices,
 delete `data/bridge-auth/`, restart the bridge and re-scan.
 
+## Memory graph
+
+People, organisations and projects, with the relations between them, in three SQLite tables
+(`entity`, `edge`, `mention`). Filled from three places: every chat and email sender becomes a
+node for free; one pass over your CV seeds you, your college and your projects; a nightly planner
+pass reads the day's kept messages. `graph.context_for()` puts two or three lines into every
+classifier prompt — who you are, who this sender is to you — which is what separates a programme
+you belong to from a webinar someone is selling you.
+
+Seed it: put your CV at `data/brain/profile/resume.docx` and run
+`docker compose run --rm brain python -m app.seed_profile /data/profile/resume.docx`.
+Inspect it: `/graph` and `/who <name>` in Telegram.
+
 ## Data & privacy
 
 `data/` holds your WhatsApp session, the SQLite db with every message, and voice notes.

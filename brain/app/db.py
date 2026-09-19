@@ -95,6 +95,45 @@ class Chat(SQLModel, table=True):
     last_message_at: Optional[datetime] = None
 
 
+class Entity(SQLModel, table=True):
+    """A node in the memory graph: a person, org, project, place or thing."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    kind: str = Field(index=True)  # person | org | project | place | thing | event_series
+    key: str = Field(unique=True, index=True)  # slug used for dedup, e.g. "jayesh-daga"
+    name: str
+    aliases: str = ""  # comma-separated other names/handles/addresses seen
+    summary: Optional[str] = None  # one line: who/what this is to the owner
+    is_owner: bool = False
+    source: str = "derived"  # resume | derived | chat | manual
+    mention_count: int = 0
+    first_seen: datetime = Field(default_factory=utcnow)
+    last_seen: datetime = Field(default_factory=utcnow)
+
+
+class Edge(SQLModel, table=True):
+    """A directed relation between two entities, with the message that evidenced it."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    src_id: int = Field(foreign_key="entity.id", index=True)
+    rel: str = Field(index=True)  # works_on | member_of | studies_at | knows | advisor_of | about | ...
+    dst_id: int = Field(foreign_key="entity.id", index=True)
+    weight: int = 1
+    note: Optional[str] = None
+    evidence_message_id: Optional[int] = Field(default=None, foreign_key="message.id")
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class Mention(SQLModel, table=True):
+    """Entity seen in a message (or attached to a task) — the trail back to evidence."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    entity_id: int = Field(foreign_key="entity.id", index=True)
+    message_id: Optional[int] = Field(default=None, foreign_key="message.id", index=True)
+    task_id: Optional[int] = Field(default=None, foreign_key="task.id", index=True)
+    created_at: datetime = Field(default_factory=utcnow)
+
+
 class Note(SQLModel, table=True):
     """Free-form key/value scratch (e.g. telegram chat id discovered at runtime)."""
 

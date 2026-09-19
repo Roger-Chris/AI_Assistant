@@ -9,6 +9,7 @@ services:
       - DATABASE_URL=sqlite:////data/brain.db
       - MEDIA_DIR=/data/media
       - GOOGLE_DIR=/data/google
+      - PROFILE_DIR=/data/profile
     volumes:
       - ./data/brain:/data
     ports:

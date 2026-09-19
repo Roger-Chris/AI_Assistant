@@ -23,6 +23,7 @@ from dateutil import parser as dateparser
 from pydantic import BaseModel, Field, ValidationError, field_validator
 from sqlmodel import Session, select
 
+from . import graph
 from .config import settings
 from .db import Message, Task, TaskKind, TaskStatus, utcnow
 from .llm import LLM, classifier_profile
@@ -77,6 +78,7 @@ If action is new (or update), also fill:
 - priority: urgent only for same-day + explicitly urgent wording; high for within ~48h or exams/professors/deadlines; else normal; low for vague "sometime".
 
 Rules:
+- WHAT YOU KNOW (when present) is the assistant's memory of {owner} and this sender: trust it over your guesses about who people are and which organisations he actually belongs to.
 - Only task/event/question that concern {owner} specifically. A group message asking "someone" is fyi unless {owner} is named, is clearly responsible, or replied agreeing.
 - If from_me is true, {owner} SENT it: it's `new` only if {owner} committed to something; it's `update`/`complete` if it relates to an open task; otherwise none.
 - EXCEPTION — the SELF CHAT ("Chat: notes to self"): everything there is {owner} talking to you, the assistant. An instruction ("send me the SH files today", "remind me to pay fees") is a `task` for {owner}. A forwarded confirmation, screenshot, ticket or invite is an `event` (or task) with its date/time. Never dismiss self-chat messages as "sent to himself".
@@ -143,7 +145,8 @@ def candidate_tasks(session: Session, msg: Message) -> list[Task]:
     return tasks
 
 
-def build_messages(msg: Message, ctx: list[Message], tasks: list[Task], owner: str) -> list[dict]:
+def build_messages(msg: Message, ctx: list[Message], tasks: list[Task], owner: str,
+                   who: str = "") -> list[dict]:
     tz = ZoneInfo(settings.tz)
     now = datetime.now(tz).strftime("%A %Y-%m-%d %H:%M %z")
     who = "ME" if msg.from_me else (msg.sender_name or msg.sender_id.split("@")[0])
@@ -156,7 +159,8 @@ def build_messages(msg: Message, ctx: list[Message], tasks: list[Task], owner: s
     else:
         chat = f"group '{msg.chat_name}'" if msg.is_group else f"direct chat with {msg.chat_name or who}"
     user = (
-        f"Chat: {chat}\n"
+        (f"WHAT YOU KNOW:\n{who}\n\n" if who else "")
+        + f"Chat: {chat}\n"
         f"OPEN TASKS you may update or complete:\n{_fmt_tasks(tasks)}\n\n"
         f"Earlier messages:\n{_fmt_context(ctx)}\n\n"
         f"NEW MESSAGE from {who} (from_me={str(msg.from_me).lower()}) "
@@ -209,7 +213,13 @@ async def classify_message(session: Session, msg: Message, owner: str = "the use
 
     llm = LLM(classifier_profile())
     try:
-        raw = await llm.complete_json(build_messages(msg, ctx, tasks, owner))
+        who = ""
+        if settings.graph_enabled:
+            try:
+                who = graph.context_for(session, msg)
+            except Exception:  # noqa: BLE001 — memory is never load-bearing
+                log.exception("graph context failed")
+        raw = await llm.complete_json(build_messages(msg, ctx, tasks, owner, who))
         result = Classification.model_validate(raw)
     except (ValidationError, ValueError, KeyError) as e:
         log.warning("classifier returned unusable output for msg %s: %s", msg.id, e)

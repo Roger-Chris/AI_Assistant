@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 from sqlmodel import Session, select
 
+from . import graph
 from .classifier import touch
 from .config import settings
 from .db import Chat, Note, Task, TaskStatus, engine
@@ -66,6 +67,15 @@ async def _handle_message(m: dict) -> None:
             from . import scheduler as _sched
             await _sched.daily_brief()
             return
+        elif text.startswith("/who"):
+            arg = text[4:].strip()
+            reply = graph.describe(session, arg) if arg else "Usage: /who <name>"
+        elif text.startswith("/graph"):
+            st = graph.stats(session)
+            kinds = ", ".join(f"{v} {k}" for k, v in sorted(st["entities"].items(), key=lambda x: -x[1])) or "nothing yet"
+            o = graph.owner(session)
+            reply = (f"Memory graph: {kinds}; {st['relations']} links.\n"
+                     + (f"\nYou: {o.summary}" if o and o.summary else "\nNo profile yet — seed it from your CV."))
         elif text.startswith("/chats"):
             chats = session.exec(select(Chat).order_by(Chat.message_count.desc()).limit(40)).all()  # type: ignore[attr-defined]
             reply = "Chats by volume (id · name · msgs):\n" + "\n".join(
@@ -83,7 +93,8 @@ async def _handle_message(m: dict) -> None:
             except (IndexError, ValueError, AssertionError):
                 reply = "Usage: /mute <id> or /unmute <id> (ids from /chats)"
         else:
-            reply = "Commands: /tasks, /today, /brief, /done <id>, /chats, /mute <id>, /unmute <id>. Chat comes in Phase 2."
+            reply = ("Commands: /tasks, /today, /brief, /done &lt;id&gt;, /chats, /mute &lt;id&gt;, /unmute &lt;id&gt;, "
+                     "/who &lt;name&gt;, /graph. Chat comes in Phase 2.")
     await tg("sendMessage", chat_id=chat_id, text=reply, parse_mode="HTML")
 
 

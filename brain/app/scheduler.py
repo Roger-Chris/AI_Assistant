@@ -9,7 +9,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlmodel import Session, select
 
 from .classifier import classify_pending, touch
-from . import gcal, gmail
+from . import gcal, gmail, graph
 from .config import settings
 from .db import Message, Task, TaskStatus, engine
 from .llm import LLM, planner_profile
@@ -91,6 +91,8 @@ def start() -> None:
     scheduler.add_job(unanswered_sweep, "interval", minutes=5, id="unanswered")
     scheduler.add_job(calendar_sync, "interval", minutes=2, id="calendar")
     scheduler.add_job(gmail.poll_all, "interval", minutes=settings.gmail_poll_minutes, id="gmail")
+    if settings.graph_enabled:
+        scheduler.add_job(graph.nightly, "cron", hour=settings.graph_hour, minute=15, id="graph")
     scheduler.start()
 
 

@@ -53,5 +53,11 @@ class Settings(BaseSettings):
     cross_chat_task_candidates: int = 12
     cross_chat_task_days: int = 14
 
+    # memory graph
+    graph_enabled: bool = True
+    graph_daily_messages: int = 300   # most messages one nightly pass will read
+    graph_daily_chunks: int = 6       # planner calls per nightly pass (cost ceiling)
+    graph_hour: int = 3               # local hour the nightly pass runs
+
 
 settings = Settings()
