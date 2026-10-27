@@ -1,11 +1,12 @@
 """The scenario: someone asks for a file, I agree, both say ok, then I send it."""
 import base64
 import time
+from datetime import datetime, timezone
 
 import pytest
 
 from app import perceive as perceive_mod
-from tests.test_pipeline import wa
+from tests.test_pipeline import as_utc, wa
 
 CHAT = {"chat_id": "life@s.whatsapp.net", "chat_name": "Jayesh L", "sender_id": "life@s.whatsapp.net"}
 
@@ -38,7 +39,7 @@ def test_request_commit_ok_send(client, fake_llm):
     assert f"#{tid} [task, pending_confirmation] Send SIH report" in fake_llm.calls[-1][-1]["content"]
     tasks = my_tasks(client)
     assert len(tasks) == 1
-    assert tasks[0]["due_at"].startswith("2026-09-18T21:10")
+    assert as_utc(tasks[0]["due_at"]) == datetime(2026, 9, 18, 15, 40, tzinfo=timezone.utc)  # 21:10 IST
 
     # 3. their "ok" -> prefilter, no model call
     n = len(fake_llm.calls)

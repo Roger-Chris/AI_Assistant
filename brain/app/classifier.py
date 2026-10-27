@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Literal, Optional
 from zoneinfo import ZoneInfo
 
@@ -184,7 +184,9 @@ def _parse_due(s: Optional[str]) -> Optional[datetime]:
             return None
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=ZoneInfo(settings.tz))
-    return dt
+    # Store UTC, like every other timestamp. Older SQLAlchemy dropped the offset and kept the local
+    # wall time, which notify/scheduler then read as UTC (5.5 h off); newer SQLModel converts itself.
+    return dt.astimezone(timezone.utc)
 
 
 def touch(task: Task) -> None:

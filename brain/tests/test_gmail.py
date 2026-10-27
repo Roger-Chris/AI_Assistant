@@ -1,6 +1,7 @@
 """Gmail ingestion against a fake service."""
 import asyncio
 import base64
+from datetime import datetime, timedelta, timezone
 
 from sqlmodel import Session, select
 
@@ -71,8 +72,10 @@ def test_poll_stores_filters_and_classifies(client, fake_llm, monkeypatch):
     monkeypatch.setitem(gmail._service_override, "primary", fake)
     fake_llm.script["credit card statement"] = {"action": "new", "kind": "task", "title": "Pay HDFC credit card ₹4,320",
                                                "due_at": "2026-09-25T18:00:00+05:30", "priority": "high", "confidence": 0.95}
+    # always in the future: events whose time has passed are dropped, so a fixed date rots
+    orientation = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
     fake_llm.script["orientation confirmed"] = {"action": "new", "kind": "event", "title": "PALS orientation",
-                                               "due_at": "2026-09-22T13:30:00+05:30", "confidence": 0.9}
+                                               "due_at": orientation, "confidence": 0.9}
     with Session(engine) as s:
         r = asyncio.run(gmail.poll_account(s, "primary"))
     assert r == {"stored": 3, "filtered": 1, "classified": 2}

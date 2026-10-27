@@ -16,7 +16,7 @@ __pycache__/
 .venv/
 .pytest_cache/
 .ruff_cache/
-uv.lock
+# uv.lock is committed: installs get the versions the tests passed on
 
 # node
 node_modules/

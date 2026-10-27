@@ -1,6 +1,15 @@
 import time
+from datetime import datetime, timezone
 
+from app.classifier import _parse_due
 from app.llm import extract_json
+
+
+def as_utc(s: str) -> datetime:
+    """An API timestamp as an aware UTC datetime. Stored times are UTC; depending on the SQLModel
+    version the API returns them with a Z or without an offset."""
+    dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    return dt.astimezone(timezone.utc) if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
 def wa(text, **kw):
@@ -14,6 +23,14 @@ def wa(text, **kw):
 def test_extract_json_tolerates_fences_and_prose():
     assert extract_json('```json\n{"a": 1}\n```') == {"a": 1}
     assert extract_json('Sure! {"a": 1} hope that helps') == {"a": 1}
+
+
+def test_due_dates_are_stored_in_utc():
+    # an offset from the model is kept as the same instant; a bare local time is read in settings.tz
+    assert _parse_due("2026-09-19T18:00:00+05:30") == datetime(2026, 9, 19, 12, 30, tzinfo=timezone.utc)
+    assert _parse_due("2026-09-19T18:00:00") == datetime(2026, 9, 19, 12, 30, tzinfo=timezone.utc)
+    assert _parse_due("2026-09-19T18:00:00+05:30").tzinfo == timezone.utc
+    assert _parse_due("not a date") is None and _parse_due(None) is None
 
 
 def test_auth_required(client):
@@ -39,7 +56,7 @@ def test_task_extracted_and_confirmable(client, fake_llm):
     t = tasks[0]
     assert t["status"] == "pending_confirmation"
     assert t["title"] == "Send project report to Jayesh"
-    assert t["due_at"].startswith("2026-09-19T18:00:00")
+    assert as_utc(t["due_at"]) == datetime(2026, 9, 19, 12, 30, tzinfo=timezone.utc)  # 18:00 IST
     assert t["source_text"].startswith("bro can you")
 
     # the classifier saw the owner name and the sender
