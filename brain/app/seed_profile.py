@@ -1,7 +1,8 @@
-"""Seed the memory graph from the owner's CV. Put the file in data/brain/google/.. no — in data/,
+"""Seed the memory graph from the owner's CV. Put the file at data/brain/profile/resume.docx,
 then run once:
 
-    docker compose run --rm brain python -m app.seed_profile /data/profile/resume.docx
+    deploy/linux/run brain python -m app.seed_profile ../data/brain/profile/resume.docx   # Linux
+    docker compose run --rm brain python -m app.seed_profile /data/profile/resume.docx    # Docker
 
 Reads .docx, .txt or .md. Everything it learns is visible with /who and /graph in Telegram, and
 can be re-run safely: entities merge on name, they don't duplicate.

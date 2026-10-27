@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Run the brain or the bridge (or a one-off command) in the foreground, with exactly the
+# environment the systemd services get. Examples, from the repo root:
+#
+#   deploy/linux/run bridge                                   # first pairing: shows the QR code
+#   deploy/linux/run brain python -m app.google_auth [label]  # Google sign-in (see README)
+#   deploy/linux/run brain python -m app.seed_profile ../data/brain/profile/resume.docx
+#   deploy/linux/run brain                                    # the brain in the foreground
+#
+# Stop the matching service first (systemctl --user stop assistant-bridge): two bridges on one
+# WhatsApp session get it logged out, and two brains fight over port 8000.
+set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/env.sh"
+
+component="${1:-}"
+case "$component" in
+  brain | bridge) shift ;;
+  *) echo "usage: deploy/linux/run brain|bridge [command...]" >&2; exit 2 ;;
+esac
+
+if [ $# -eq 0 ] && systemctl --user is-active --quiet "assistant-$component" 2>/dev/null; then
+  echo "assistant-$component is running as a service; stop it first: systemctl --user stop assistant-$component" >&2
+  exit 1
+fi
+
+load_service_env
+cd "$REPO/$component"
+if [ "$component" = brain ]; then
+  export PATH="$REPO/brain/.venv/bin:$PATH"
+  [ $# -gt 0 ] || set -- uvicorn app.main:app --host 127.0.0.1 --port 8000
+else
+  [ $# -gt 0 ] || set -- node index.js
+fi
+exec "$@"

@@ -1,0 +1,17 @@
+[Unit]
+Description=AI_Assistant WhatsApp bridge (read-only)
+After=assistant-brain.service
+Wants=assistant-brain.service
+
+[Service]
+WorkingDirectory=@REPO@/bridge
+EnvironmentFile=@REPO@/.env
+EnvironmentFile=@REPO@/deploy/linux/native.env
+Environment="PATH=@PATH@"
+ExecStart=@NODE@ index.js
+Restart=always
+RestartSec=10
+MemoryHigh=1G
+
+[Install]
+WantedBy=default.target

@@ -14,12 +14,32 @@ android/  the phone app. Not started. Telegram is the interim remote.
 data/     git-ignored: brain.db, WhatsApp session, media, Google tokens, the CV. Never commit.
 ```
 
-**The rule that keeps the Mac mini migration trivial: nothing in `brain/`, `bridge/` or
+**The rule that keeps moving hosts trivial: nothing in `brain/`, `bridge/` or
 `docker-compose.yml` may depend on a GPU or on this laptop.** Heavy work goes in `worker/` and
-talks to the brain over HTTP. The brain currently runs on the HP Omen for development; the Mac
-mini becomes the permanent host once it is reset.
+talks to the brain over HTTP.
+
+Hosts: the permanent host is a **Linux machine** (8 GB RAM, hard disk, no GPU), running the brain
+and bridge **natively as systemd user services, no Docker** (`deploy/linux/`, see its README). The
+brain listens on 127.0.0.1:8000 only; the Orchestrator hub (`../Orchestrator`) runs on the same
+machine and is the phone's way in. The HP Omen is for development (Docker Compose) and is a GPU
+worker when it is on. The Mac mini joins later as an Orchestrator coding device, not as this
+project's host. GPU jobs beyond the Omen go to free cloud notebooks (Colab/Kaggle) on demand.
 
 ## Commands
+
+On the Linux machine (native, systemd):
+
+```bash
+deploy/linux/install.sh                       # deps, units, (re)start; safe to re-run
+deploy/linux/update.sh                        # git pull --ff-only + install
+journalctl --user -u assistant-brain -f       # follow (or assistant-bridge)
+deploy/linux/run brain python -m app.google_auth [label]   # any command with the services' env
+```
+
+`deploy/linux/native.env` overrides the Docker paths in `.env` (relative to brain/ and bridge/).
+Keep it in step with `docker-compose.yml` when paths change.
+
+On the laptop (Docker):
 
 ```bash
 docker compose up --build -d brain bridge   # rebuild + restart
@@ -30,9 +50,9 @@ docker compose run --rm -p 8765:8765 brain python -m app.google_auth [label]   #
 docker compose run --rm brain python -m app.seed_profile /data/profile/resume.docx
 ```
 
-Read the database while the container runs with **read-only** sqlite
+With Docker, read the database while the container runs with **read-only** sqlite
 (`sqlite3.connect('file:data/brain/brain.db?mode=ro', uri=True)`). Writing to it from outside the
-container gives "disk I/O error".
+container gives "disk I/O error". Natively on Linux this does not apply.
 
 ## How a message flows
 

@@ -4,14 +4,18 @@ Personal Jarvis-style assistant. Reads WhatsApp (where the tasks arrive), extrac
 events, keeps the schedule, and reaches the phone — push now, calls for urgent things later.
 
 ```
-brain/    always-on orchestrator. CPU-only. Dev on the HP, production on the Mac mini.
+brain/    always-on orchestrator. CPU-only. Production on the Linux machine, dev on the HP.
 bridge/   WhatsApp linked-device bridge (Baileys). Read-only. Forwards messages to the brain.
 worker/   GPU / laptop-only jobs (Whisper, local model). Runs on the HP when it's on. Phase 4.
 android/  the phone app. Phase 5. Telegram is the interim remote.
 ```
 
-Rule that keeps the Mac mini migration trivial: **nothing in `brain/` or `docker-compose.yml`
+Rule that keeps moving hosts trivial: **nothing in `brain/`, `bridge/` or `docker-compose.yml`
 may depend on a GPU or on the laptop.** Heavy stuff goes in `worker/`.
+
+**On the Linux machine** the brain and bridge run natively as systemd services, no Docker:
+see [deploy/linux/README.md](deploy/linux/README.md) (`deploy/linux/install.sh`). The Docker
+steps below are for running it on the Windows laptop.
 
 ## Phase 0/1 — run it
 
@@ -29,12 +33,7 @@ may depend on a GPU or on the laptop.** Heavy stuff goes in `worker/`.
    Within a few seconds Telegram shows the extracted task with Keep / Not-a-task buttons.
 5. `docker compose up -d` for both once it works.
 
-Without Docker (what the Mac mini will do):
-
-```
-cd brain && pip install . && uvicorn app.main:app --host 0.0.0.0 --port 8000
-cd bridge && npm install && npm start
-```
+Without Docker, on Linux: `deploy/linux/install.sh` (see [deploy/linux/README.md](deploy/linux/README.md)).
 
 ## API (what the Android app will use)
 
@@ -80,7 +79,8 @@ classifier prompt — who you are, who this sender is to you — which is what s
 you belong to from a webinar someone is selling you.
 
 Seed it: put your CV at `data/brain/profile/resume.docx` and run
-`docker compose run --rm brain python -m app.seed_profile /data/profile/resume.docx`.
+`deploy/linux/run brain python -m app.seed_profile ../data/brain/profile/resume.docx` on Linux
+(with Docker: `docker compose run --rm brain python -m app.seed_profile /data/profile/resume.docx`).
 Inspect it: `/graph` and `/who <name>` in Telegram.
 
 ## Data & privacy

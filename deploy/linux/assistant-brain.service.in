@@ -1,0 +1,18 @@
+[Unit]
+Description=AI_Assistant brain (FastAPI, localhost only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=@REPO@/brain
+EnvironmentFile=@REPO@/.env
+EnvironmentFile=@REPO@/deploy/linux/native.env
+# Loopback only: the bridge and the Orchestrator hub are on this machine; the phone goes through the hub.
+ExecStart=@REPO@/brain/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=5
+# Throttle (not kill) if it grows; the box has 8 GB shared with the hub's AI CLIs.
+MemoryHigh=1G
+
+[Install]
+WantedBy=default.target

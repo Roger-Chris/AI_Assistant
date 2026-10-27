@@ -1,4 +1,5 @@
-# Brain-side stack: CPU-only, portable to the Mac mini (linux/amd64).
+# Brain-side stack for the Windows laptop. CPU-only (linux/amd64).
+# The Linux machine runs the same two services natively instead: see deploy/linux/README.md.
 # GPU / laptop-only services live in worker/docker-compose.yml, never here.
 services:
   brain:

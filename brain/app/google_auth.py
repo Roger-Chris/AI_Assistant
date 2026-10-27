@@ -1,13 +1,16 @@
 """One-time Google OAuth. Run from the project folder, once per Google account:
 
-    docker compose run --rm -p 8765:8765 brain python -m app.google_auth            # primary account
-    docker compose run --rm -p 8765:8765 brain python -m app.google_auth college    # a second one, labelled
+    deploy/linux/run brain python -m app.google_auth            # Linux; primary account
+    deploy/linux/run brain python -m app.google_auth college    # a second one, labelled
+    docker compose run --rm -p 8765:8765 brain python -m app.google_auth   # laptop, Docker
 
 Tokens are stored per label (token.json for primary, token-<label>.json for others). Calendar
 uses the primary account; Gmail polls every account that has a token.
 
 It prints a URL; open it in any browser on the laptop, approve, and the browser is redirected to
-localhost:8765, which Docker forwards into this container. The refresh token lands in
+localhost:8765, which Docker forwards into this container (on the Linux machine, an
+`ssh -L 8765:localhost:8765` tunnel from the laptop does it; see deploy/linux/README.md). The
+refresh token lands in
 GOOGLE_DIR/token.json and the brain refreshes it silently from then on.
 
 Scopes are deliberately narrow: calendar read/write on your calendars, Gmail read + drafts (no send),
@@ -84,7 +87,8 @@ def main() -> int:
     path = token_path(label)
     with open(path, "w") as f:
         f.write(creds.to_json())
-    print(f"\nsaved {path}. Restart the brain: docker compose restart brain")
+    print(f"\nsaved {path}. Restart the brain: systemctl --user restart assistant-brain "
+          "(Docker: docker compose restart brain)")
     return 0
 
 
