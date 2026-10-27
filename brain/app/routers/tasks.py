@@ -5,11 +5,11 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlmodel import Session, select
 
 from ..auth import require_token
-from ..classifier import touch
+from ..classifier import to_utc, touch
 from ..db import Message, Task, TaskKind, TaskStatus, get_session
 
 router = APIRouter(prefix="/tasks", tags=["tasks"], dependencies=[Depends(require_token)])
@@ -52,12 +52,18 @@ def list_tasks(status: Optional[TaskStatus] = None, limit: int = 100,
     return [to_out(session, t) for t in session.exec(q).all()]
 
 
+def _due_utc(v: Optional[datetime]) -> Optional[datetime]:
+    return to_utc(v) if v else v
+
+
 class TaskCreate(BaseModel):
     title: str
     kind: TaskKind = TaskKind.task
     details: Optional[str] = None
     due_at: Optional[datetime] = None
     priority: str = "normal"
+
+    _utc = field_validator("due_at")(_due_utc)
 
 
 @router.post("", response_model=TaskOut, status_code=201)
@@ -101,6 +107,8 @@ class TaskPatch(BaseModel):
     details: Optional[str] = None
     due_at: Optional[datetime] = None
     priority: Optional[str] = None
+
+    _utc = field_validator("due_at")(_due_utc)
 
 
 @router.patch("/{task_id}", response_model=TaskOut)

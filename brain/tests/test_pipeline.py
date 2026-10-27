@@ -112,6 +112,24 @@ def test_manual_task_and_patch(client):
     assert r.json()["title"] == "Buy 10k resistors"
 
 
+def test_api_due_dates_without_offset_are_local_time(client):
+    # the app may send a bare "17:00": it means 17:00 in TZ (Asia/Kolkata), stored as UTC
+    r = client.post("/tasks", json={"title": "Collect parcel", "due_at": "2026-11-01T17:00:00"})
+    assert r.status_code == 201
+    assert as_utc(r.json()["due_at"]) == datetime(2026, 11, 1, 11, 30, tzinfo=timezone.utc)
+    tid = r.json()["id"]
+    r = client.patch(f"/tasks/{tid}", json={"due_at": "2026-11-02T09:00:00"})
+    assert r.status_code == 200
+    assert as_utc(r.json()["due_at"]) == datetime(2026, 11, 2, 3, 30, tzinfo=timezone.utc)
+    # an explicit offset is kept as the same instant
+    r = client.patch(f"/tasks/{tid}", json={"due_at": "2026-11-02T09:00:00Z"})
+    assert as_utc(r.json()["due_at"]) == datetime(2026, 11, 2, 9, 0, tzinfo=timezone.utc)
+    # clearing the date still works
+    r = client.patch(f"/tasks/{tid}", json={"due_at": None})
+    assert r.json()["due_at"] is None
+    client.post(f"/tasks/{tid}/done")  # leave the shared test db's open list as we found it
+
+
 def test_history_is_stored_as_context_not_tasks(client, fake_llm):
     fake_llm.script["send the report"] = {"action": "new", "kind": "task", "title": "x", "confidence": 0.95}
     old = [wa("please send the report", chat_id="h@s.whatsapp.net", timestamp=int(time.time()) - 86400),

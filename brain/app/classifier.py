@@ -182,10 +182,15 @@ def _parse_due(s: Optional[str]) -> Optional[datetime]:
             dt = dateparser.parse(s)
         except (ValueError, TypeError):
             return None
+    return to_utc(dt)
+
+
+def to_utc(dt: datetime) -> datetime:
+    """A due time as aware UTC, how every timestamp is stored. A time without an offset means local
+    time in TZ. Older SQLAlchemy dropped offsets and kept the local wall time, which notify/scheduler
+    then read as UTC (5.5 h off); newer SQLModel refuses times without an offset outright."""
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=ZoneInfo(settings.tz))
-    # Store UTC, like every other timestamp. Older SQLAlchemy dropped the offset and kept the local
-    # wall time, which notify/scheduler then read as UTC (5.5 h off); newer SQLModel converts itself.
     return dt.astimezone(timezone.utc)
 
 
