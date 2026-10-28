@@ -44,7 +44,7 @@ On the laptop (Docker):
 ```bash
 docker compose up --build -d brain bridge   # rebuild + restart
 docker compose logs -f brain                # follow
-cd brain && uv run --extra dev pytest -q    # 61 tests, all offline (fake LLM + mocked HTTP)
+cd brain && uv run --extra dev pytest -q    # 96 tests, all offline (fake LLM + mocked HTTP)
 cd brain && ruff check app tests
 docker compose run --rm -p 8765:8765 brain python -m app.google_auth [label]   # OAuth per account
 docker compose run --rm brain python -m app.seed_profile /data/profile/resume.docx
@@ -79,6 +79,27 @@ and failed ones. Delivery: the Orchestrator hub's `POST /api/notify` (`HUB_URL`,
 `deploy/linux/native.env`), else Telegram with Done / Snooze / Not important buttons. The app
 answers through `POST /alerts/{id}/ack`; done also finishes the task, dismiss is kept for
 learning later. One open alert per `key`; `supersede` closes the previous brief or overdue list.
+
+## The watcher and background work
+
+`watcher.py` runs every 5 minutes; every rule has its own alert key and a key that was ever raised
+(answered or not) is never raised again, so "done" or "not important" does not come back. Rules:
+deadline within 6 h → notify (`risk6:`), 1 h → alarm (`risk1:`; at night an accepted task calls
+straight away, since alarms are held through quiet hours); a promise of yours past due → notify
+(found from the task's source message or a `from_me` message whose stored classification updated
+it); bills 2 days before → notify, due day → alarm; renewals 7 days before and on the day (tasks,
+and mails that name a renewal/expiry word plus a date with a year); WhatsApp silent 12 h while it
+normally flows, Gmail failing (Note `gmail_error_<label>`, written by `gmail.record_poll`).
+An alarm unanswered for `ESCALATE_MINUTES` (sent in the last 2 h) becomes a call, `CALLS_PER_DAY`
+max; in quiet hours only deadline/bill alarms call. All watcher alerts go through
+`watcher.interrupt()`: learning (3 dismissals of a kind from a chat in 30 days → one level
+quieter; notify.py's new_task and question alerts use it too), then the cheap model's yes/no
+(`WATCH_JUDGE`; "no" drops a level, notification → silent, recorded as a level-0 `done` row).
+Who is waiting: `close_relation()` matches the sender to a graph person by exact key or alias only,
+then a close relation edge or a family/professor/manager word in the summary → alarm.
+`review.py`: weekly review (Sun 18:00), monthly noise report (1st 09:00), Gmail drafts
+(`DRAFTS_ENABLED`, off; never sent). Tests run the watcher at a time a month ahead so rows other
+tests wrote "now" are out of its windows.
 
 ## Models
 
