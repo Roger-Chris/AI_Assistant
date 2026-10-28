@@ -9,7 +9,7 @@ Every notification is an Alert with a level:
 Inside quiet hours only calls go out; the rest waits for the window to end.
 
 Delivery is the Orchestrator hub's POST /api/notify (the phone app); when the hub is not set up or
-does not answer, Telegram. You answer an alert with done, snooze or dismiss ("not important"),
+does not answer, ntfy (NTFY_TOPIC), then Telegram. You answer an alert with done, snooze or dismiss ("not important"),
 from the app, Telegram or POST /alerts/{id}/ack.
 """
 from __future__ import annotations
@@ -35,8 +35,12 @@ SILENT, BRIEF, NOTIFY, ALARM, CALL = 0, 1, 2, 3, 4
 OPEN = ("pending", "sent")
 ACTIONS = ("done", "snooze", "dismiss")
 
-# tests swap in an httpx.MockTransport for the hub
+# tests swap in an httpx.MockTransport for the hub and for ntfy
 hub_transport: Optional[httpx.AsyncBaseTransport] = None
+ntfy_transport: Optional[httpx.AsyncBaseTransport] = None
+
+# alert level -> ntfy priority (1 min .. 3 default .. 4 high .. 5 max/urgent)
+NTFY_PRIORITY = {BRIEF: 3, NOTIFY: 4, ALARM: 5, CALL: 5}
 
 
 def _aware(dt: datetime) -> datetime:
@@ -98,16 +102,24 @@ async def raise_alert(session: Session, level: int, kind: str, title: str, body:
     return a
 
 
+def channels() -> list[str]:
+    """The channels that are set up, in the order they are tried."""
+    return [name for name, on in (("hub", settings.hub_url), ("ntfy", settings.ntfy_topic),
+                                  ("telegram", settings.telegram_bot_token)) if on]
+
+
 async def deliver(session: Session, a: Alert) -> bool:
-    """Phone app through the hub, else Telegram. False, and still pending, when a channel is set up
-    but did not take it; the next deliver_due pass tries again."""
-    if settings.hub_url and await _to_hub(a):
-        channel = "hub"
-    elif settings.telegram_bot_token and await _to_telegram(session, a):
-        channel = "telegram"
-    elif not settings.hub_url and not settings.telegram_bot_token:
-        channel = "none"  # nowhere to send: it still shows in the app list and the brief
-    else:
+    """Phone app through the hub, else ntfy, else Telegram. False, and still pending, when a channel
+    is set up but none took it; the next deliver_due pass tries again."""
+    senders = {"hub": lambda: _to_hub(a), "ntfy": lambda: _to_ntfy(a),
+               "telegram": lambda: _to_telegram(session, a)}
+    setup = channels()
+    channel = "none" if not setup else None  # nowhere to send: it still shows in the app list and the brief
+    for name in setup:
+        if await senders[name]():
+            channel = name
+            break
+    if channel is None:
         log.warning("alert #%s not delivered; will retry", a.id)
         return False
     a.status, a.channel, a.sent_at, a.ack = "sent", channel, utcnow(), None
@@ -126,6 +138,28 @@ async def _to_hub(a: Alert) -> bool:
         return False
     if r.status_code >= 300:
         log.warning("hub refused alert #%s: %s %s", a.id, r.status_code, r.text[:200])
+        return False
+    return True
+
+
+async def _to_ntfy(a: Alert) -> bool:
+    """A push through ntfy. Answers (done/snooze/dismiss) stay in the app and Telegram: the brain is
+    loopback-only, so ntfy's action buttons could not reach it. Tapping opens NTFY_CLICK_URL."""
+    msg: dict = {"topic": settings.ntfy_topic, "title": a.title, "message": a.body or a.title,
+                 "priority": NTFY_PRIORITY.get(a.level, 3), "tags": [f"alert-{a.id}", a.kind]}
+    if settings.ntfy_click_url:
+        msg["click"] = settings.ntfy_click_url
+        msg["actions"] = [{"action": "view", "label": "Open app", "url": settings.ntfy_click_url}]
+    headers = {"Authorization": f"Bearer {settings.ntfy_token}"} if settings.ntfy_token else {}
+    try:
+        async with httpx.AsyncClient(timeout=10, transport=ntfy_transport) as c:
+            # JSON publishing goes to the server root, the topic is in the body
+            r = await c.post(settings.ntfy_url.rstrip("/") + "/", headers=headers, json=msg)
+    except httpx.HTTPError as e:
+        log.warning("ntfy unreachable for alert #%s: %s", a.id, e)
+        return False
+    if r.status_code >= 300:
+        log.warning("ntfy refused alert #%s: %s %s", a.id, r.status_code, r.text[:200])
         return False
     return True
 

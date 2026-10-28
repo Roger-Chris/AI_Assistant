@@ -51,6 +51,21 @@ class Settings(BaseSettings):
     orc_token: str = ""  # the hub's ORC_TOKEN (the hub also trusts plain loopback calls)
     quiet_hours: str = "23:00-07:00"  # local time; only calls (level 4) ring inside it. Empty = none
     snooze_minutes: int = 60
+    # ntfy (https://ntfy.sh or self-hosted): fallback when the hub does not answer. Off while the
+    # topic is empty. The topic is the only secret on ntfy.sh: make it long and random.
+    ntfy_url: str = "https://ntfy.sh"
+    ntfy_topic: str = ""
+    ntfy_token: str = ""  # optional access token (self-hosted server with auth, or ntfy.sh account)
+    ntfy_click_url: str = ""  # opened when the notification is tapped, e.g. http://<hub tailscale ip>:4317
+
+    # health (health.py): self-checks every 5 minutes and a dead-man ping
+    healthcheck_url: str = ""  # healthchecks.io ping URL; empty = no dead-man ping
+    health_hub_down_minutes: int = 30  # alert when the hub has not answered for this long
+    health_min_free_gb: float = 2.0  # alert when the data volume has less free space than this
+    health_max_db_mb: int = 1024  # alert when brain.db (plus its -wal) grows past this
+    # nightly restic backup (deploy/linux/backup.sh); set here so the health check watches it
+    backup_repo: str = ""
+    health_backup_max_hours: int = 36  # alert when the last good backup is older than this
 
     # how many prior messages from the same chat to show the classifier
     context_window: int = 6

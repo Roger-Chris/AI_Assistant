@@ -49,7 +49,27 @@ for name in assistant-brain assistant-bridge; do
     "$REPO/deploy/linux/$name.service.in" >"$unit_dir/$name.service"
   echo "wrote $unit_dir/$name.service"
 done
+
+# Nightly backups (backup.sh), only when BACKUP_REPO is set in .env; otherwise removed again.
+backup_repo="$(load_env "$REPO/.env"; printf '%s' "${BACKUP_REPO:-}")"
+if [ -n "$backup_repo" ]; then
+  for name in assistant-backup.service assistant-backup.timer; do
+    sed -e "s|@REPO@|$REPO|g" -e "s|@PATH@|$PATH|g" "$REPO/deploy/linux/$name.in" >"$unit_dir/$name"
+    echo "wrote $unit_dir/$name"
+  done
+  command -v restic >/dev/null || echo "warning: restic is missing (sudo apt install restic); backups will fail until it is installed"
+else
+  if [ -f "$unit_dir/assistant-backup.timer" ]; then
+    systemctl --user disable --now assistant-backup.timer 2>/dev/null || true
+    rm -f "$unit_dir/assistant-backup.timer" "$unit_dir/assistant-backup.service"
+    echo "BACKUP_REPO is empty: removed the backup timer"
+  fi
+fi
 systemctl --user daemon-reload
+if [ -n "$backup_repo" ]; then
+  systemctl --user enable --now assistant-backup.timer >/dev/null
+  echo "backups: nightly at 03:45 to $backup_repo (systemctl --user list-timers assistant-backup.timer)"
+fi
 
 # Without lingering, user services stop at logout and don't start at boot.
 if ! loginctl show-user "$USER" -p Linger 2>/dev/null | grep -q 'Linger=yes'; then
@@ -89,3 +109,4 @@ fi
 say "Done"
 echo "Logs:    journalctl --user -u assistant-brain -f   (or assistant-bridge)"
 echo "Update:  deploy/linux/update.sh"
+[ -z "$backup_repo" ] || echo "Backup:  deploy/linux/backup.sh (now), journalctl --user -u assistant-backup"
