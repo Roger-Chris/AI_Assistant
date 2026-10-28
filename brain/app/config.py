@@ -63,6 +63,9 @@ class Settings(BaseSettings):
     health_hub_down_minutes: int = 30  # alert when the hub has not answered for this long
     health_min_free_gb: float = 2.0  # alert when the data volume has less free space than this
     health_max_db_mb: int = 1024  # alert when brain.db (plus its -wal) grows past this
+    # nightly restic backup (deploy/linux/backup.sh); set here so the health check watches it
+    backup_repo: str = ""
+    health_backup_max_hours: int = 36  # alert when the last good backup is older than this
 
     # how many prior messages from the same chat to show the classifier
     context_window: int = 6

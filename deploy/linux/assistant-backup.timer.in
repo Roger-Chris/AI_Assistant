@@ -1,0 +1,10 @@
+[Unit]
+Description=AI_Assistant nightly backup at 03:45
+
+[Timer]
+OnCalendar=*-*-* 03:45:00
+# Missed while the machine was off: run soon after it is back.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

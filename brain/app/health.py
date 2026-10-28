@@ -8,6 +8,8 @@ open alert is closed again once the check passes):
          (healthchecks.io then emails you).
   disk   the data volume has less than HEALTH_MIN_FREE_GB free
   db     brain.db (with its -wal) is bigger than HEALTH_MAX_DB_MB
+  backup with BACKUP_REPO set: the last nightly backup failed, or the last good one is older than
+         HEALTH_BACKUP_MAX_HOURS (deploy/linux/backup.sh writes data/brain/backup-status)
 
 WhatsApp silence and Gmail errors are watched in watcher.py, not here.
 
@@ -108,12 +110,35 @@ def check_db() -> Check:
     return Check("db", ok, f"{db.name} is {mb:.0f} MB (limit {settings.health_max_db_mb} MB)", alert=not ok)
 
 
+def check_backup(now: datetime) -> Optional[Check]:
+    if not settings.backup_repo:
+        return None
+    db = _db_path()
+    stamp = (db.parent if db else Path(".")) / "backup-status"
+    if not stamp.exists():
+        return Check("backup", True, "no backup has run yet")
+    state, _, when = stamp.read_text(encoding="utf-8").strip().partition(" ")
+    try:
+        at = datetime.fromisoformat(when.replace("Z", "+00:00"))
+    except ValueError:
+        return Check("backup", False, f"unreadable {stamp.name}: {state} {when}"[:200], alert=True)
+    hours = (now - at).total_seconds() / 3600
+    if state != "ok":
+        return Check("backup", False, f"the last backup failed ({when}); journalctl --user -u assistant-backup", alert=True)
+    if hours > settings.health_backup_max_hours:
+        return Check("backup", False, f"the last good backup was {hours:.0f} h ago", alert=True)
+    return Check("backup", True, f"last good backup {hours:.0f} h ago")
+
+
 async def collect(now: Optional[datetime] = None) -> list[Check]:
     """Runs every check. No alerts, no ping: that is run()."""
     now = now or utcnow()
     hub = await check_hub(now)
     checks = [hub] if hub else []
     checks += [check_reach(hub), check_disk(), check_db()]
+    backup = check_backup(now)
+    if backup:
+        checks.append(backup)
     return checks
 
 
@@ -153,7 +178,8 @@ async def run(now: Optional[datetime] = None) -> list[Check]:
     return checks
 
 
-_TITLES = {"hub": "Orchestrator hub is down", "disk": "Disk almost full", "db": "Database is getting big"}
+_TITLES = {"hub": "Orchestrator hub is down", "disk": "Disk almost full", "db": "Database is getting big",
+           "backup": "Nightly backup is not working"}
 
 
 def _close(session: Session, name: str) -> None:

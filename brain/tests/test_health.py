@@ -170,3 +170,22 @@ def test_detail_reports_a_failing_check(client, net, monkeypatch):
     assert next(c for c in body["checks"] if c["name"] == "db")["ok"] is False
     assert not health_alerts()
 
+
+
+async def test_backup_status(net, monkeypatch):
+    stamp = health._db_path().parent / "backup-status"
+    monkeypatch.setattr(settings, "backup_repo", "")
+    assert "backup" not in by_name(await health.collect(now=ist(10)))
+    monkeypatch.setattr(settings, "backup_repo", "rclone:gdrive:assistant-backup")
+    try:
+        stamp.unlink(missing_ok=True)
+        assert by_name(await health.collect(now=ist(10)))["backup"].ok  # nothing has run yet
+        stamp.write_text("ok 2026-10-28T22:15:00Z\n")  # 03:45 IST on the 29th
+        assert by_name(await health.collect(now=ist(10)))["backup"].ok
+        assert not by_name(await health.collect(now=ist(10, day=31)))["backup"].ok  # 2+ days old
+        stamp.write_text("failed 2026-10-28T22:16:00Z\n")
+        checks = by_name(await health.run(now=ist(10)))
+        assert not checks["backup"].ok and "failed" in checks["backup"].detail
+        assert [a.key for a in health_alerts()] == ["health:backup:2026-10-29"]
+    finally:
+        stamp.unlink(missing_ok=True)
