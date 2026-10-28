@@ -27,6 +27,8 @@ class TaskOut(BaseModel):
     confidence: float
     source_chat: Optional[str] = None
     source_text: Optional[str] = None
+    # Where the task came from: "email" | "whatsapp" | "telegram", or "manual" when made by hand.
+    source: str = "manual"
     created_at: datetime
 
 
@@ -36,7 +38,8 @@ def to_out(session: Session, t: Task) -> TaskOut:
         id=t.id, kind=t.kind, status=t.status, title=t.title, details=t.details, due_at=t.due_at,
         priority=t.priority, people=t.people, confidence=t.confidence,
         source_chat=(src.chat_name or src.chat_id) if src else None,
-        source_text=src.text[:300] if src else None, created_at=t.created_at,
+        source_text=src.text[:300] if src else None, source=src.source if src else "manual",
+        created_at=t.created_at,
     )
 
 

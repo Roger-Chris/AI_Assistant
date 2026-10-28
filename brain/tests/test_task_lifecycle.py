@@ -111,7 +111,10 @@ def test_self_chat_note_becomes_task(client, fake_llm):
                                                  media_type="audio"))
     assert "skipped" not in r.json()
     assert "notes to self" in fake_llm.calls[-1][-1]["content"]
-    assert [t for t in client.get("/tasks").json() if t["title"] == "Send SH files"]
+    tasks = [t for t in client.get("/tasks").json() if t["title"] == "Send SH files"]
+    assert tasks and tasks[0]["source"] == "whatsapp"
+    made = client.post("/tasks", json={"title": "Buy stamps"}).json()
+    assert made["source"] == "manual"
 
 
 def test_question_is_watched_then_surfaced_or_closed(client, fake_llm, monkeypatch):
