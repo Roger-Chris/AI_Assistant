@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, field_validator
 from sqlmodel import Session, select
 
+from ..alerts import close_for_task
 from ..auth import require_token
 from ..classifier import to_utc, touch
 from ..db import Message, Task, TaskKind, TaskStatus, get_session
@@ -86,6 +87,8 @@ def _transition(session: Session, task_id: int, status: TaskStatus) -> TaskOut:
     touch(t)
     session.add(t)
     session.commit()
+    if status in (TaskStatus.done, TaskStatus.rejected):
+        close_for_task(session, task_id)
     session.refresh(t)
     return to_out(session, t)
 

@@ -12,10 +12,10 @@ from zoneinfo import ZoneInfo
 
 from sqlmodel import Session, select
 
-from . import graph
+from . import alerts, graph
 from .classifier import touch
 from .config import settings
-from .db import Chat, Note, Task, TaskStatus, engine
+from .db import Alert, Chat, Note, Task, TaskStatus, engine
 from .notify import fmt_due, tg
 
 log = logging.getLogger("brain.telegram")
@@ -101,12 +101,26 @@ async def _handle_message(m: dict) -> None:
     await tg("sendMessage", chat_id=chat_id, text=reply, parse_mode="HTML")
 
 
+_ACK_LABEL = {"done": "✅ Done", "snooze": "⏰ Snoozed", "dismiss": "🙈 Not important"}
+
+
+def _ack_alert(data: str) -> str:
+    """Buttons on alerts sent through Telegram: alert:<done|snooze|dismiss>:<id>."""
+    _, action, aid = (data.split(":", 2) + ["", ""])[:3]
+    with Session(engine) as session:
+        a = session.get(Alert, int(aid)) if aid.isdigit() else None
+        if not a or action not in alerts.ACTIONS:
+            return ""
+        alerts.ack(session, a, action)
+    return _ACK_LABEL[action]
+
+
 async def _handle_callback(cb: dict) -> None:
     data = cb.get("data", "")
     action, _, tid = data.partition(":")
-    label = ""
+    label = _ack_alert(data) if action == "alert" else ""
     with Session(engine) as session:
-        t = session.get(Task, int(tid)) if tid.isdigit() else None
+        t = session.get(Task, int(tid)) if tid.isdigit() and action != "alert" else None
         if t and action == "confirm":
             t.status = TaskStatus.open
             label = "✅ Kept"

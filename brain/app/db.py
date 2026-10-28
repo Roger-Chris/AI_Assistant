@@ -73,6 +73,25 @@ class Task(SQLModel, table=True):
     notified: bool = False  # pushed to the phone yet?
 
 
+class Alert(SQLModel, table=True):
+    """Something worth your attention, and how loudly to ask for it. See alerts.py for the levels."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    level: int = 2  # 1 brief, 2 notification, 3 alarm, 4 call
+    kind: str = Field(index=True)  # new_task | question | overdue | brief
+    title: str
+    body: str = ""
+    task_id: Optional[int] = Field(default=None, foreign_key="task.id")
+    key: Optional[str] = Field(default=None, index=True)  # at most one open alert per key
+    status: str = Field(default="pending", index=True)  # pending | sent | done | dismissed
+    deliver_after: datetime = Field(default_factory=utcnow, index=True)  # quiet hours, snooze
+    channel: Optional[str] = None  # hub | telegram | none
+    ack: Optional[str] = None  # your answer: done | snooze | dismiss
+    created_at: datetime = Field(default_factory=utcnow)
+    sent_at: Optional[datetime] = None
+    acked_at: Optional[datetime] = None
+
+
 class Worker(SQLModel, table=True):
     """Part-time heavy-compute nodes (the Omen). They heartbeat; the brain routes jobs by liveness."""
 

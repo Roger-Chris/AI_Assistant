@@ -1,19 +1,22 @@
-"""Outbound notifications to the user's phone.
+"""What happened, turned into alerts (alerts.py decides how loudly), plus the Telegram transport.
 
-Today: Telegram (interim). Later: FCM push to the Android app, and Twilio calls for the urgent tier.
-Everything goes through `send()` so swapping the channel is one file.
+Quiet by default: a new task interrupts you only when it is high priority or due within a day;
+updates and completions are silent (the app and the morning brief show them). Telegram is the
+fallback channel when the Orchestrator hub's phone app is not set up.
 """
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
 
 import httpx
 from sqlmodel import Session
 
+from . import alerts
 from .config import settings
-from .db import Message, Note, Task
+from .db import Message, Note, Task, utcnow
 
 log = logging.getLogger("brain.notify")
 TG = "https://api.telegram.org/bot{token}/{method}"
@@ -43,17 +46,17 @@ async def tg(method: str, session: Optional[Session] = None, **params) -> Option
 
 
 async def send(text: str, session: Optional[Session] = None, buttons: Optional[list[list[dict]]] = None,
-               priority: str = "normal") -> None:
-    """priority: normal | high | urgent. Urgent will also trigger a call once Twilio is wired."""
+               priority: str = "normal") -> bool:
+    """A Telegram message. True when Telegram took it."""
     chat_id = _chat_id(session)
     if not chat_id:
         log.info("no telegram chat id yet; would send: %s", text[:120])
-        return
+        return False
     params: dict = {"chat_id": chat_id, "text": text, "parse_mode": "HTML",
                     "disable_notification": priority == "low"}
     if buttons:
         params["reply_markup"] = {"inline_keyboard": buttons}
-    await tg("sendMessage", session, **params)
+    return await tg("sendMessage", session, **params) is not None
 
 
 def fmt_due(task: Task) -> str:
@@ -63,60 +66,55 @@ def fmt_due(task: Task) -> str:
     return dt.astimezone(ZoneInfo(settings.tz)).strftime("%a %d %b, %H:%M")
 
 
+def _where(src: Message) -> str:
+    chat = src.chat_name or src.chat_id.split("@")[0]
+    if src.is_self:
+        return "your notes"
+    if src.from_me:
+        return f"you → {chat}"
+    if src.is_group:
+        return f"{src.sender_name or src.sender_id.split('@')[0]} in {chat}"
+    return chat
+
+
+def new_task_level(task: Task) -> int:
+    """High priority, or due within a day (or already due): a notification. Otherwise silent."""
+    if task.priority in ("high", "urgent"):
+        return alerts.NOTIFY
+    if task.due_at:
+        due = task.due_at if task.due_at.tzinfo else task.due_at.replace(tzinfo=ZoneInfo("UTC"))
+        if due - utcnow() < timedelta(hours=24):
+            return alerts.NOTIFY
+    return alerts.SILENT
+
+
 async def new_task(session: Session, task: Task, src: Message) -> None:
     icon = {"task": "📝", "event": "📅", "question": "❓"}.get(task.kind.value, "•")
     if src.source == "email":
         icon = "📧 " + icon
-    flag = " 🔴" if task.priority == "urgent" else (" 🟠" if task.priority == "high" else "")
-    chat = src.chat_name or src.chat_id.split("@")[0]
-    if src.is_self:
-        where = "your notes"
-    elif src.from_me:
-        where = f"you → {chat}"
-    elif src.is_group:
-        where = f"{src.sender_name or src.sender_id.split('@')[0]} in {chat}"
-    else:
-        where = chat
-    quote = (src.text or "").replace("<", "&lt;")[:200]
-    text = (
-        f"{icon} <b>{task.title}</b>{flag}\n"
-        f"Due: {fmt_due(task)}  ·  {task.kind.value}  ·  {int(task.confidence * 100)}%\n"
-        f"From <i>{where}</i>: “{quote}”"
-    )
-    buttons = [[{"text": "✅ Keep", "callback_data": f"confirm:{task.id}"},
-                {"text": "❌ Not a task", "callback_data": f"reject:{task.id}"}]]
-    await send(text, session, buttons, priority=task.priority)
+    quote = (src.text or "")[:200]
+    body = f"Due {fmt_due(task)} · {task.kind.value} · from {_where(src)}: “{quote}”"
+    await alerts.raise_alert(session, new_task_level(task), "new_task", f"{icon} {task.title}", body,
+                             task_id=task.id, key=f"task:{task.id}")
     task.notified = True
     session.add(task)
     session.commit()
 
 
 async def task_updated(session: Session, task: Task, changed: dict, src: Message) -> None:
-    bits = []
-    if "due_at" in changed:
-        bits.append(f"due {fmt_due(task)}")
-    if "priority" in changed:
-        bits.append(f"priority {task.priority}")
-    if "details" in changed:
-        bits.append(f"note: {str(changed['details'])[:120]}")
-    who = "you" if src.from_me else (src.sender_name or "them")
-    text = f"✏️ <b>{task.title}</b> — updated ({', '.join(bits)}) from {who}: “{(src.text or '')[:120].replace('<', '&lt;')}”"
-    await send(text, session, priority="low")
+    log.info("task #%s updated (%s) from message %s", task.id, ", ".join(changed), src.id)
 
 
 async def task_completed(session: Session, task: Task, src: Message) -> None:
-    evidence = (src.text or f"[{src.media_type}]")[:120].replace("<", "&lt;")
-    text = f"✅ <b>{task.title}</b> — marked done\nEvidence: “{evidence}”"
-    buttons = [[{"text": "↩️ Not done, reopen", "callback_data": f"reopen:{task.id}"}]]
-    await send(text, session, buttons, priority="low")
+    log.info("task #%s done, evidence message %s", task.id, src.id)
+    alerts.close_for_task(session, task.id)
 
 
 async def unanswered_question(session: Session, task: Task, src: Optional[Message], minutes: int) -> None:
     who = (src.sender_name or src.chat_name or "someone") if src else "someone"
-    quote = ((src.text or "") if src else task.title)[:160].replace("<", "&lt;")
-    text = f"❓ <b>{who} is waiting</b> — “{quote}”\n{minutes} min, no reply from you."
-    buttons = [[{"text": "✅ Replied / handled", "callback_data": f"done:{task.id}"},
-                {"text": "🙈 Ignore", "callback_data": f"reject:{task.id}"}]]
-    await send(text, session, buttons, priority="high")
+    quote = ((src.text or "") if src else task.title)[:160]
+    await alerts.raise_alert(session, alerts.NOTIFY, "question", f"❓ {who} is waiting",
+                             f"“{quote}” · {minutes} min, no reply from you.", task_id=task.id,
+                             key=f"question:{task.id}")
     task.notified = True
     session.add(task)

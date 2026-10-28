@@ -44,7 +44,7 @@ On the laptop (Docker):
 ```bash
 docker compose up --build -d brain bridge   # rebuild + restart
 docker compose logs -f brain                # follow
-cd brain && uv run --extra dev pytest -q    # 41 tests, all offline (fake LLM + mocked HTTP)
+cd brain && uv run --extra dev pytest -q    # 61 tests, all offline (fake LLM + mocked HTTP)
 cd brain && ruff check app tests
 docker compose run --rm -p 8765:8765 brain python -m app.google_auth [label]   # OAuth per account
 docker compose run --rm brain python -m app.seed_profile /data/profile/resume.docx
@@ -66,6 +66,19 @@ registration task even from a different sender.
 
 Questions to the owner become `watching` tasks: silent unless unanswered past
 `QUESTION_GRACE_MINUTES`, and closed silently by any reply from him in that chat.
+
+## Alerts: quiet by default
+
+Nothing writes to the phone directly any more: everything goes through `alerts.raise_alert` with a
+level (0 silent, 1 brief, 2 notification, 3 alarm, 4 call; 3 and 4 are Phase 3 and go out as
+notifications for now). `notify.py` decides levels: a new task interrupts only when high/urgent or
+due within 24 h; updates and completions are silent; unanswered questions and the 18:00 overdue
+list are notifications; the morning brief is level 1. `QUIET_HOURS` (default 23:00-07:00, local)
+holds everything below a call until it ends; the `alerts` job (every minute) sends held, snoozed
+and failed ones. Delivery: the Orchestrator hub's `POST /api/notify` (`HUB_URL`, set in
+`deploy/linux/native.env`), else Telegram with Done / Snooze / Not important buttons. The app
+answers through `POST /alerts/{id}/ack`; done also finishes the task, dismiss is kept for
+learning later. One open alert per `key`; `supersede` closes the previous brief or overdue list.
 
 ## Models
 

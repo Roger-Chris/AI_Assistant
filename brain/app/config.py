@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     # questions to you: surface only if unanswered after this many minutes (0 = surface at once)
     question_grace_minutes: int = 20
 
+    # alerts (alerts.py): quiet by default, delivered through the Orchestrator hub's phone app
+    hub_url: str = ""  # e.g. http://127.0.0.1:4317; empty = Telegram only
+    orc_token: str = ""  # the hub's ORC_TOKEN (the hub also trusts plain loopback calls)
+    quiet_hours: str = "23:00-07:00"  # local time; only calls (level 4) ring inside it. Empty = none
+    snooze_minutes: int = 60
+
     # how many prior messages from the same chat to show the classifier
     context_window: int = 6
     # extra open tasks from other chats/senders offered for update/complete (confirmations often

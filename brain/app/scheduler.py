@@ -8,12 +8,12 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlmodel import Session, select
 
-from . import gcal, gmail, graph
+from . import alerts, gcal, gmail, graph
 from .classifier import classify_pending, touch
 from .config import settings
 from .db import Message, Task, TaskStatus, engine
 from .llm import LLM, planner_profile
-from .notify import fmt_due, send, unanswered_question
+from .notify import fmt_due, unanswered_question
 
 log = logging.getLogger("brain.scheduler")
 scheduler = AsyncIOScheduler(timezone=settings.tz)
@@ -63,7 +63,8 @@ async def daily_brief() -> None:
         except Exception as e:  # noqa: BLE001 — fall back to a plain list rather than silence
             log.warning("planner unavailable for brief (%s); sending raw list", e)
             text = "Morning brief (planner offline):\n" + _dump(tasks)
-        await send("☀️ " + text.replace("<", "&lt;"), session)
+        await alerts.raise_alert(session, alerts.BRIEF, "brief", "☀️ Morning brief", text,
+                                 key=f"brief:{datetime.now(tz).date()}", supersede=True)
 
 
 async def catch_up() -> None:
@@ -80,8 +81,14 @@ async def overdue_nudge() -> None:
         tasks = [t for t in session.exec(select(Task).where(Task.status == TaskStatus.open)).all()
                  if t.due_at and (t.due_at if t.due_at.tzinfo else t.due_at.replace(tzinfo=ZoneInfo("UTC"))) < now - timedelta(hours=1)]
         if tasks:
-            await send("⏰ Overdue:\n" + "\n".join(f"#{t.id} {t.title} — {fmt_due(t)}" for t in tasks), session,
-                       priority="high")
+            await alerts.raise_alert(session, alerts.NOTIFY, "overdue", f"⏰ {len(tasks)} overdue",
+                                     "\n".join(f"#{t.id} {t.title} · {fmt_due(t)}" for t in tasks), supersede=True)
+
+
+async def deliver_alerts() -> None:
+    """Alerts held through quiet hours, snoozed, or not delivered the first time."""
+    with Session(engine) as session:
+        await alerts.deliver_due(session)
 
 
 def start() -> None:
@@ -89,6 +96,7 @@ def start() -> None:
     scheduler.add_job(overdue_nudge, "cron", hour=18, minute=0, id="overdue")
     scheduler.add_job(catch_up, "interval", minutes=10, id="catch_up")
     scheduler.add_job(unanswered_sweep, "interval", minutes=5, id="unanswered")
+    scheduler.add_job(deliver_alerts, "interval", minutes=1, id="alerts")
     scheduler.add_job(calendar_sync, "interval", minutes=2, id="calendar")
     scheduler.add_job(gmail.poll_all, "interval", minutes=settings.gmail_poll_minutes, id="gmail")
     if settings.graph_enabled:
