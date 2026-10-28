@@ -44,7 +44,7 @@ On the laptop (Docker):
 ```bash
 docker compose up --build -d brain bridge   # rebuild + restart
 docker compose logs -f brain                # follow
-cd brain && uv run --extra dev pytest -q    # 61 tests, all offline (fake LLM + mocked HTTP)
+cd brain && uv run --extra dev pytest -q    # 76 tests, all offline (fake LLM + mocked HTTP)
 cd brain && ruff check app tests
 docker compose run --rm -p 8765:8765 brain python -m app.google_auth [label]   # OAuth per account
 docker compose run --rm brain python -m app.seed_profile /data/profile/resume.docx
@@ -79,6 +79,20 @@ and failed ones. Delivery: the Orchestrator hub's `POST /api/notify` (`HUB_URL`,
 `deploy/linux/native.env`), else Telegram with Done / Snooze / Not important buttons. The app
 answers through `POST /alerts/{id}/ack`; done also finishes the task, dismiss is kept for
 learning later. One open alert per `key`; `supersede` closes the previous brief or overdue list.
+
+## Looking after itself
+
+- Delivery order in `alerts.deliver`: hub → ntfy (`NTFY_TOPIC`, off when empty; level → ntfy
+  priority 3/4/5; tap opens `NTFY_CLICK_URL`; acks stay in the app/Telegram) → Telegram.
+  `alerts.channels()` lists what is set up. Tests mock ntfy with `alerts.ntfy_transport`.
+- `health.py`, every 5 min: hub down > 30 min, nothing can reach you (logged loudly + failing
+  dead-man ping), disk < 2 GB, db > 1 GB, backup failed/stale (`data/brain/backup-status`). One
+  NOTIFY a day per check (`health:<name>:<date>`, even if dismissed); closed when it passes again.
+  `HEALTHCHECK_URL` (healthchecks.io) is pinged each run. `GET /health/detail` (token) for the app.
+  WhatsApp silence and Gmail errors live in `watcher.py`, not here.
+- `deploy/linux/backup.sh`: restic to `BACKUP_REPO`, SQLite copied with `.backup` into
+  `~/.cache/assistant-backup/sqlite` first (live `*.db` excluded), 7/4/6 retention, timer 03:45
+  only when `BACKUP_REPO` is set. Restore: `deploy/linux/restore.md`.
 
 ## Models
 
