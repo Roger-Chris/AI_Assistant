@@ -14,6 +14,8 @@ Rules, each with its own alert key so one thing is raised once:
              notification a day (health:whatsapp:<date>, health:gmail:<label>:<date>).
   call       an alarm still unanswered after ESCALATE_MINUTES becomes a voice call (call:<alarm id>),
              at most CALLS_PER_DAY a day. Inside quiet hours only deadline and bill alarms call.
+             Alarms are held through quiet hours (alerts.py), so an accepted task due within the
+             hour at night is raised as a call straight away (risk1 at level 4, same cap).
 
 Who is waiting: `close_relation()` tells notify.unanswered_question to ring (alarm) instead of
 notify when the sender is family, a professor/advisor/manager, or a chat listed in WATCH_VIP_CHATS.
@@ -60,6 +62,7 @@ PROMISE_LOOKBACK = timedelta(hours=24)  # older broken promises are the 18:00 ov
 WHATSAPP_NORMAL_PER_WEEK = 20  # fewer than this in the week before: silence is normal, not a fault
 GMAIL_ERROR_COUNT = 3  # consecutive failed polls before it is worth telling you
 GMAIL_ERROR_MINUTES = 30
+ESCALATE_WINDOW = timedelta(hours=2)  # an alarm unanswered for longer was missed; a call now is noise
 
 # money owed. Mirrors gmail._MINE's bill wording; kept apart because this runs on task titles
 _BILL = re.compile(
@@ -291,7 +294,11 @@ async def deadlines(session: Session, now: datetime) -> int:
                 old.status = "done"
                 session.add(old)
             session.commit()
-            a = await interrupt(session, ALARM, "deadline", f"{_icon(t)} Within the hour: {t.title}", body,
+            # at night an alarm would wait for the morning, after the deadline: an accepted task calls
+            level = ALARM
+            if alerts.quiet_until(now) and t.status == TaskStatus.open                     and calls_today(session, now) < settings.calls_per_day:
+                level, body = CALL, call_script(None, t, title=f"{t.title} {when} {fmt_due(t)}")
+            a = await interrupt(session, level, "deadline", f"{_icon(t)} Within the hour: {t.title}", body,
                                 task_id=t.id, key=key, now=now)
         else:
             key = f"risk6:{t.id}"
@@ -457,9 +464,11 @@ async def health(session: Session, now: datetime) -> int:
     return raised
 
 
-def call_script(a: Alert, t: Optional[Task]) -> str:
+def call_script(a: Optional[Alert], t: Optional[Task], title: str = "") -> str:
     """One or two sentences the voice call reads out."""
     who = settings.owner_name.split()[0] if settings.owner_name else "Hi"
+    if a is None:
+        return f"{who}, this is your assistant: {title}. Open the app and mark it done or snooze it."
     what = t.title if t else _plain(a.title)
     if a.kind == "question":
         return f"{who}, {_plain(a.title)}, and you have not answered the alarm. Please reply to them."
@@ -467,18 +476,24 @@ def call_script(a: Alert, t: Optional[Task]) -> str:
     return f"{who}, this is your assistant: {what}{when}. The alarm went unanswered; open the app and mark it done or snooze it."
 
 
+def calls_today(session: Session, now: datetime) -> int:
+    midnight = datetime.combine(_local(now).date(), datetime.min.time(), tzinfo=ZoneInfo(settings.tz))
+    return session.exec(select(func.count(Alert.id)).where(Alert.level == CALL,
+                                                           Alert.created_at >= _utc(midnight))).one()
+
+
 async def escalate(session: Session, now: datetime) -> int:
-    """An alarm still unanswered after ESCALATE_MINUTES: a call, CALLS_PER_DAY at most. Inside
-    quiet hours only deadline and bill alarms call."""
+    """An alarm still unanswered after ESCALATE_MINUTES (and sent within ESCALATE_WINDOW): a call,
+    CALLS_PER_DAY at most. Inside quiet hours only deadline and bill alarms call; a deadline that
+    has already passed never does."""
     cutoff = now - timedelta(minutes=settings.escalate_minutes)
     alarms = session.exec(select(Alert).where(Alert.level == ALARM, Alert.status == "sent",
-                                              Alert.ack.is_(None), Alert.sent_at <= cutoff)  # type: ignore[union-attr,operator]
+                                              Alert.ack.is_(None), Alert.sent_at <= cutoff,  # type: ignore[union-attr,operator]
+                                              Alert.sent_at >= now - ESCALATE_WINDOW)  # type: ignore[operator]
                           .order_by(Alert.id)).all()
     if not alarms:
         return 0
-    midnight = datetime.combine(_local(now).date(), datetime.min.time(), tzinfo=ZoneInfo(settings.tz))
-    calls = session.exec(select(func.count(Alert.id)).where(Alert.level == CALL,
-                                                            Alert.created_at >= _utc(midnight))).one()
+    calls = calls_today(session, now)
     quiet = alerts.quiet_until(now) is not None
     made = 0
     for a in alarms:
@@ -493,6 +508,8 @@ async def escalate(session: Session, now: datetime) -> int:
         t = session.get(Task, a.task_id) if a.task_id else None
         if t and t.status in (TaskStatus.done, TaskStatus.rejected):
             continue
+        if t and t.due_at and a.kind == "deadline" and _utc(t.due_at) < now:
+            continue  # too late for a call to help
         c = await interrupt(session, CALL, "call", f"📞 {_plain(a.title)}", call_script(a, t),
                             task_id=a.task_id, key=key, min_level=CALL, now=now)
         if c and c.level == CALL:

@@ -441,3 +441,24 @@ async def test_learning_applies_to_questions_too():
         t = task(s, "Reply", kind=TaskKind.question, chat="watch-chatty", src=src)
         await notify.unanswered_question(s, t, src, 25)
         assert task_alerts(s, t)[0].level == alerts.BRIEF
+
+
+async def test_night_deadline_calls_straight_away_for_accepted_tasks_only():
+    night = BASE.replace(hour=23, minute=30)
+    with Session(engine) as s:
+        acc = task(s, "Upload the thesis", due=night + timedelta(minutes=40))
+        card = task(s, "Maybe a party", due=night + timedelta(minutes=40), status=TaskStatus.pending_confirmation)
+        await watcher.deadlines(s, night.astimezone(timezone.utc))
+        [c] = task_alerts(s, acc)
+        assert (c.level, c.status, c.key) == (alerts.CALL, "sent", f"risk1:{acc.id}")
+        assert "Upload the thesis" in c.body
+        [p] = task_alerts(s, card)
+        assert (p.level, p.status) == (alerts.ALARM, "pending")  # held until the morning
+
+
+async def test_stale_alarms_and_passed_deadlines_do_not_call():
+    with Session(engine) as s:
+        _alarm(s, sent=at(-3))  # missed hours ago
+        gone = task(s, "Was due", due=at(-0.1))
+        _alarm(s, task_id=gone.id)
+        assert await watcher.escalate(s, at().astimezone(timezone.utc)) == 0
