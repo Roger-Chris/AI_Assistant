@@ -78,6 +78,8 @@ def test_search_all_words_then_any_word_and_kind_filter(client):
     assert both[0]["uid"] == "project:zz-evtol"
     anyw = client.get("/memory/search", params={"q": "zzthrust unknownword"}).json()
     assert [h["uid"] for h in anyw] == ["file:zz-thrust"]
+    question = client.get("/memory/search", params={"q": "which file has the zzthrust readings"}).json()
+    assert question[0]["uid"] == "file:zz-thrust"  # question words are not searched for
     files = client.get("/memory/search", params={"q": "thrust", "kind": "file"}).json()
     assert all(h["kind"] == "file" for h in files) and files
 
@@ -129,16 +131,19 @@ def test_about_gathers_relations_and_facts(client):
 def test_import_markdown_project_with_decisions_is_idempotent(client):
     md = ("---\naliases: zzX8, zz air ambulance drone\ntags: hardware\nstatus: tethered\n---\n"
           "# Zzimport eVTOL\nHeavy-lift X8 coaxial.\n\n## Decisions\n- Coaxial X8 for redundancy\n"
-          "- Tether only until ESC thermals are fixed\n\n## Notes\n- not a decision\n")
+          "- Tether only until ESC thermals are fixed\n\n## Notes\n- not a decision\nRelated: [[Zzimport Battery Sim]]\n")
     files = [{"name": "evtol.md", "text": md}]
     out = client.post("/memory/import", json={"files": files}).json()["imported"][0]
-    assert out == {"uid": "project:zzimport-evtol", "title": "Zzimport eVTOL", "decisions": 2}
+    assert out == {"uid": "project:zzimport-evtol", "title": "Zzimport eVTOL", "decisions": 2, "links": 1}
     head = client.get("/memory/stats").json()["head"]
     client.post("/memory/import", json={"files": files})
     assert client.get("/memory/stats").json()["head"] == head  # same content: no new writes
     about = client.get("/memory/about", params={"name": "zzx8"}).json()  # found by alias
     assert about["record"]["data"]["status"] == "tethered"
     assert {r["kind"] for r in about["linked"]} == {"decision"}
+    assert about["relations"] == [{"src": "project:zzimport-battery-sim", "rel": "related_to",
+                                   "dst": "project:zzimport-evtol",
+                                   "title": "Zzimport Battery Sim related to Zzimport eVTOL"}]
 
 
 def test_memory_needs_the_token(client):

@@ -225,10 +225,22 @@ def changes(session: Session, since: int = 0, limit: int = 500) -> dict:
 # ---------------------------------------------------------------- reads
 
 _WORD = re.compile(r"[\w]+", re.UNICODE)
+# Question words carry no meaning in a search; "which project uses X" should search for X.
+# Kept in step with STOPWORDS in the Orchestrator's src/shared/replica.ts.
+STOPWORDS = frozenset(
+    "a an and are as at be but by can did do does for from had has have how i in is it its me my "
+    "of on or our so that the their them then there these this to was we were what when where which "
+    "who whom why will with you your about any all also into just than use uses used using".split())
+
+
+def _words(q: str) -> list[str]:
+    words = [w for w in _WORD.findall(q.lower()) if len(w) > 1]
+    kept = [w for w in words if w not in STOPWORDS]
+    return (kept or words)[:12]  # a query made only of stop words still searches for them
 
 
 def _fts_query(q: str, joiner: str) -> str:
-    words = [w for w in _WORD.findall(q.lower()) if len(w) > 1][:12]
+    words = _words(q)
     return f" {joiner} ".join(f'"{w}"*' for w in words)
 
 
