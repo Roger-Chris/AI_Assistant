@@ -23,10 +23,13 @@ def test_chats_list_and_mute(client):
         s.commit()
 
 
-def test_brief_now_arrives_as_an_alert(client):
+def test_brief_now_arrives_as_an_alert_every_time(client):
     assert client.post("/brief").json() == {"ok": True}
+    assert client.post("/brief").json() == {"ok": True}  # a second press the same day: a fresh brief
     with Session(engine) as s:
-        assert s.exec(select(Alert).where(Alert.kind == "brief")).first()
+        briefs = s.exec(select(Alert).where(Alert.kind == "brief").order_by(Alert.id)).all()  # type: ignore[arg-type]
+        assert len(briefs) >= 2
+        assert briefs[-1].status in ("sent", "pending") and briefs[-2].status == "done"
 
 
 def test_usage_and_graph(client):

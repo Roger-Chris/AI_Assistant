@@ -8,7 +8,7 @@ from sqlmodel import Session, select
 
 from .. import graph
 from ..auth import require_token
-from ..db import Chat, get_session
+from ..db import Alert, Chat, get_session
 from ..llm import usage_report
 
 router = APIRouter(tags=["control"], dependencies=[Depends(require_token)])
@@ -38,10 +38,16 @@ def mute(chat_pk: int, body: Mute, session: Session = Depends(get_session)) -> d
 
 
 @router.post("/brief")
-async def brief() -> dict:
-    """Today's brief now (it arrives like the 8 am one: in the app)."""
+async def brief(session: Session = Depends(get_session)) -> dict:
+    """A fresh brief now (it arrives like the 8 am one: in the app). Today's earlier brief is
+    closed first: briefs are keyed by date, so it would otherwise block the new one."""
     from .. import scheduler  # scheduler imports the routers' modules indirectly
+    from ..alerts import OPEN
 
+    for old in session.exec(select(Alert).where(Alert.kind == "brief", Alert.status.in_(OPEN))).all():  # type: ignore[attr-defined]
+        old.status = "done"
+        session.add(old)
+    session.commit()
     await scheduler.daily_brief()
     return {"ok": True}
 
