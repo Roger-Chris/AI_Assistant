@@ -109,3 +109,43 @@ async def test_usage_report_counts_every_key(monkeypatch):
     assert ring.tokens == {0: 30, 1: 30, 2: 30}
     report = llm_mod.usage_report()
     assert "2 calls, 30 tokens" in report and report.count("calls") == 3
+
+
+@pytest.mark.asyncio
+async def test_thinks_with_chatgpt_through_the_hub_and_falls_back_to_gemini(monkeypatch):
+    """PLANNER_BASE_URL=hub + PLANNER_MODEL=codex: your ChatGPT session via the hub's /v1;
+    when that fails, the fallback (Gemini by API) answers instead."""
+    llm_mod.LLM.override = None
+    seen = []
+    hub_up = {"ok": True}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        seen.append((request.url.host, body["model"], request.headers["authorization"].split()[1]))
+        if request.url.host == "127.0.0.1" and not hub_up["ok"]:
+            return httpx.Response(502, json={"error": {"message": "codex: usage limit"}})
+        return httpx.Response(200, json={"choices": [{"message": {"content": f"from {body['model']}"}}], "usage": {}})
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    monkeypatch.setattr(llm_mod, "BACKOFF_SECONDS", 0.001)
+    s = llm_mod.settings
+    monkeypatch.setattr(s, "hub_url", "http://127.0.0.1:4317")
+    monkeypatch.setattr(s, "orc_token", "")
+    monkeypatch.setattr(s, "planner_base_url", "hub")
+    monkeypatch.setattr(s, "planner_model", "codex")
+    monkeypatch.setattr(s, "planner_api_key", "")
+    monkeypatch.setattr(s, "planner_api_keys", "")
+    monkeypatch.setattr(s, "planner_fallback_base_url", "https://generativelanguage.googleapis.com/v1beta/openai")
+    monkeypatch.setattr(s, "planner_fallback_api_keys", "g1")
+    monkeypatch.setattr(s, "planner_fallback_model", "gemini-3.8-flash")
+    llm_mod._rings.clear()
+
+    p = llm_mod.planner_profile()
+    assert p.base_url == "http://127.0.0.1:4317/v1" and p.model == "codex" and p.min_timeout >= 180
+    assert await LLM(p).complete([{"role": "user", "content": "hi"}]) == "from codex"
+    assert seen == [("127.0.0.1", "codex", "loopback")]
+
+    hub_up["ok"] = False
+    assert await LLM(p).complete([{"role": "user", "content": "hi"}]) == "from gemini-3.8-flash"
+    assert seen[-1] == ("generativelanguage.googleapis.com", "gemini-3.8-flash", "g1")

@@ -39,6 +39,10 @@ class Profile:
     base_url: str
     api_keys: list[str]
     model: str
+    # tried when this one fails outright (all keys rate-limited, the model busy, an error)
+    fallback: Optional["Profile"] = None
+    # minimum seconds per call: a ChatGPT/Claude session through the hub takes far longer than an API
+    min_timeout: float = 0.0
 
 
 class KeyRing:
@@ -90,14 +94,40 @@ def _split(keys: str) -> list[str]:
     return [k.strip() for k in keys.split(",") if k.strip()]
 
 
+# The Orchestrator hub serves your logged-in AI sessions as an OpenAI-style endpoint
+# (/v1/chat/completions, model = codex | claude | gemini | groq): BASE_URL=hub uses it, so the
+# brain thinks with your ChatGPT (or Claude) subscription instead of an API key.
+HUB_MODELS = {"codex", "claude", "gemini", "groq", "auto"}
+
+
+def _profile(name: str, base_url: str, keys: list[str], model: str) -> Profile:
+    hub = (settings.hub_url or "http://127.0.0.1:4317").rstrip("/")
+    via_hub = base_url.strip().lower() == "hub"
+    if via_hub:
+        base_url = f"{hub}/v1"
+        # the hub trusts loopback calls; from another machine it needs its token
+        keys = keys or [settings.orc_token or "loopback"]
+    return Profile(name, base_url, keys, model, min_timeout=240.0 if via_hub else 0.0)
+
+
+def _with_fallback(primary: Profile, base_url: str, keys: str, model: str) -> Profile:
+    if base_url and model:
+        primary.fallback = _profile(f"{primary.name}-fallback", base_url, _split(keys), model)
+    return primary
+
+
 def classifier_profile() -> Profile:
     keys = _split(settings.classifier_api_keys) or _split(settings.classifier_api_key)
-    return Profile("classifier", settings.classifier_base_url, keys, settings.classifier_model)
+    p = _profile("classifier", settings.classifier_base_url, keys, settings.classifier_model)
+    return _with_fallback(p, settings.classifier_fallback_base_url, settings.classifier_fallback_api_keys,
+                          settings.classifier_fallback_model)
 
 
 def planner_profile() -> Profile:
     keys = _split(settings.planner_api_keys) or _split(settings.planner_api_key)
-    return Profile("planner", settings.planner_base_url, keys, settings.planner_model)
+    p = _profile("planner", settings.planner_base_url, keys, settings.planner_model)
+    return _with_fallback(p, settings.planner_fallback_base_url, settings.planner_fallback_api_keys,
+                          settings.planner_fallback_model)
 
 
 _FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
@@ -196,7 +226,21 @@ class LLM:
         if LLM.override is not None:
             return await LLM.override.complete(messages, json_mode=json_mode,
                                                temperature=temperature, max_tokens=max_tokens)
-        p = self.profile
+        p: Optional[Profile] = self.profile
+        while p is not None:
+            try:
+                return await self._complete(p, messages, json_mode=json_mode,
+                                            temperature=temperature, max_tokens=max_tokens)
+            except (httpx.HTTPError, RuntimeError) as e:
+                if p.fallback is None:
+                    raise
+                log.warning("%s (%s) failed: %s; trying %s (%s)", p.name, p.model, str(e)[:200],
+                            p.fallback.name, p.fallback.model)
+                p = p.fallback
+        raise RuntimeError("unreachable")
+
+    async def _complete(self, p: Profile, messages: list[dict], *, json_mode: bool,
+                        temperature: float, max_tokens: int) -> str:
         ring = _ring(p)
         if not len(ring):
             raise RuntimeError(f"{p.name}: no API key configured")
@@ -212,7 +256,7 @@ class LLM:
 
         last: Optional[httpx.Response] = None
         attempts = max(len(ring), MAX_ATTEMPTS)
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(timeout=max(self.timeout, p.min_timeout)) as client:
             for attempt in range(attempts):
                 idx, key = ring.next()
                 headers = {"Authorization": f"Bearer {key}"}

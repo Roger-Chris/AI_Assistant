@@ -26,6 +26,7 @@ os.environ["MEMORY_MIRROR_MINUTES"] = "0"
 
 import argparse  # noqa: E402
 import asyncio  # noqa: E402
+import dataclasses  # noqa: E402
 import json  # noqa: E402
 import re  # noqa: E402
 import time  # noqa: E402
@@ -41,7 +42,7 @@ from sqlmodel import Session, select  # noqa: E402
 from . import agent, memory  # noqa: E402
 from .config import settings  # noqa: E402
 from .db import Entity, MemoryRecord, Task, TaskKind, TaskStatus, engine, init_db  # noqa: E402
-from .llm import LLM, Profile, _split, planner_profile  # noqa: E402
+from .llm import HUB_MODELS, LLM, _split, planner_profile  # noqa: E402
 
 # ---------------------------------------------------------------- the fake hub
 
@@ -306,7 +307,9 @@ async def run(cases: list[Case], llm: LLM, repeat: int) -> list[dict]:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Evaluate the thinking loop against the real model (fake devices, throwaway database).")
-    ap.add_argument("--model", help="model name instead of PLANNER_MODEL (same keys and endpoint)")
+    ap.add_argument("--model", help="model name instead of PLANNER_MODEL (same keys and endpoint); codex, claude, "
+                    "gemini or groq think through the hub's logged-in sessions (codex = your ChatGPT account)")
+    ap.add_argument("--hub", default="http://127.0.0.1:4317", help="the real Orchestrator hub, for --model codex etc.")
     ap.add_argument("--repeat", type=int, default=1, help="runs per case, to see how stable the answers are")
     ap.add_argument("--only", help="comma-separated case names")
     ap.add_argument("--out", help="write the full report as JSON here")
@@ -317,15 +320,20 @@ def main() -> None:
             print(f"{c.name:<18} {c.why}")
         return
     cases = [c for c in CASES if not args.only or c.name in args.only.split(",")]
+    # The model may itself be served by the real hub (PLANNER_BASE_URL=hub / --model codex): build
+    # that profile against the real hub before the devices are pointed at the fake one.
+    settings.hub_url = args.hub
+    if args.model in HUB_MODELS:
+        settings.planner_base_url, settings.planner_model = "hub", args.model
+    prof = planner_profile()
     settings.hub_url = "http://eval-hub"  # the fake hub, whatever .env says
     settings.agent_device_notes = ("omen = the HP Omen laptop (Windows, RTX 5050); linux-hub = the always-on Linux "
                                    "machine; mac-mini = the Mac mini")
     init_db()
-    prof = planner_profile()
     if not prof.api_keys:  # the planner shares the classifier's keys when it has none of its own
-        prof = Profile(prof.name, prof.base_url, _split(settings.classifier_api_keys) or _split(settings.classifier_api_key), prof.model)
-    if args.model:
-        prof = Profile(prof.name, prof.base_url, prof.api_keys, args.model)
+        prof = dataclasses.replace(prof, api_keys=_split(settings.classifier_api_keys) or _split(settings.classifier_api_key))
+    if args.model and prof.model != args.model:
+        prof = dataclasses.replace(prof, model=args.model)
     if not prof.api_keys:
         raise SystemExit("no planner API key in .env (PLANNER_API_KEYS or CLASSIFIER_API_KEYS)")
     print(f"model {prof.model} · {len(cases)} cases × {args.repeat} · owner {settings.owner_name} · database {_TMP}\n")

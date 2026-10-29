@@ -19,12 +19,21 @@ class Settings(BaseSettings):
     classifier_api_keys: str = ""  # comma-separated; rotated round-robin, overrides the single key
     classifier_model: str = "gemini-3.5-flash-lite"
     classifier_min_confidence: float = 0.6
+    # tried when the classifier model fails (busy, all keys rate-limited); empty = none
+    classifier_fallback_base_url: str = ""
+    classifier_fallback_api_keys: str = ""
+    classifier_fallback_model: str = ""
 
     # strong, low-volume model
     planner_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
     planner_api_key: str = ""
     planner_api_keys: str = ""
     planner_model: str = "gemini-3.8-flash"
+    # PLANNER_BASE_URL=hub + PLANNER_MODEL=codex thinks with your ChatGPT session through the
+    # Orchestrator hub; the fallback (e.g. Gemini or Groq by API) is used when that fails.
+    planner_fallback_base_url: str = ""
+    planner_fallback_api_keys: str = ""
+    planner_fallback_model: str = ""
 
     # perceive: voice notes -> transcript, images -> description (multimodal Gemini, same keys)
     perceive_enabled: bool = True
