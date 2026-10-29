@@ -25,7 +25,28 @@ on its branch (merged into `main` when the phase is merged).
 | 3 | Alarm screen + two-way voice call in the app (Groq Whisper + model with safe actions) | `night/phase3-call` (Orchestrator) | agent running |
 | 5 | Looking after itself: health pings, ntfy fallback, nightly backups | merged into `main` | done: 76 tests pass, verified before merge; untested on real Linux (restic, rclone, timer, ntfy, healthchecks) |
 
-**Stopped early (usage limit).** Phases 2+4 and 3 were still being built by agents when the session
+**Update 2026-10-29 (morning): all phases merged.**
+
+- **Phases 2 + 4** merged into AI_Assistant `main` (52a5a88): 111 brain tests pass after the merge,
+  ruff clean. New: `brain/app/watcher.py` (deadlines at risk, promises, bills, renewals, who is
+  waiting ranked by the memory graph, WhatsApp silence / Gmail errors, alarm → call escalation
+  capped at `CALLS_PER_DAY`, learning from "Not important") and `brain/app/review.py` (Sunday
+  weekly review, monthly noise report, Gmail draft replies, off by default). Details:
+  `docs/night-log/phase2-4.md`.
+- **Phase 3** merged into Orchestrator `main` (5b3ad8b) after merging in the other session's 4 new
+  commits (2 conflicts, both sides kept): 102 hub tests pass, hub/web/mobile typecheck clean.
+  New: loud "alarm" channel for level 3-4, call screen (`mobile/src/app/call/[id].tsx`: ring,
+  speak, push-to-talk, typed fallback), `POST /api/calls/:alertId/turn` (Groq Whisper + a fixed
+  list of safe actions; draft/delegate only after you say yes). New native packages `expo-audio`
+  and `expo-speech`: the next APK needs `npx expo prebuild` (the GitHub release workflow does a
+  full build). Not built: full-screen intent (Expo has no option for it with notification
+  messages). Untested on a device: channel sound/DND on HyperOS, recording, TTS, real Groq.
+  Details: `docs/night-log/phase3-call.md`.
+- Still needs you, on top of the list below: `GROQ_API_KEY(S)` in the hub's `.env` for voice;
+  optionally `WATCH_VIP_CHATS` in the brain's `.env`; on the phone allow the microphone and, if
+  HyperOS did not grant it, "Override Do Not Disturb" for the "Alarms and calls" channel.
+
+**Stopped early (usage limit, superseded by the update above).** Phases 2+4 and 3 were still being built by agents when the session
 hit its limit. Whatever they committed is on their branches (`night/phase2-4` in AI_Assistant,
 `night/phase3-call` in Orchestrator, if pushed) and in their worktrees under
 `C:\development\AI Assistant\worktrees\`. Not merged, not verified. Next session: check each
