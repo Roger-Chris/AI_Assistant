@@ -202,7 +202,12 @@ def apply_batch(session: Session, records: Iterable[dict], device: str) -> list[
         except (ValueError, json.JSONDecodeError) as e:
             out.append({"uid": uid, "accepted": False, "error": str(e)})
             continue
-        out.append({"uid": uid, "accepted": changed, "seq": rec.seq})
+        res = {"uid": uid, "accepted": changed, "seq": rec.seq}
+        if not changed:
+            # Refused (older than ours) or identical: send our copy back, so a device that wrote
+            # the losing edit converges even when our copy is older than its last pull.
+            res["record"] = to_dict(rec)
+        out.append(res)
     return out
 
 

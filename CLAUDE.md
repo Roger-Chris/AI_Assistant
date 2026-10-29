@@ -44,7 +44,7 @@ On the laptop (Docker):
 ```bash
 docker compose up --build -d brain bridge   # rebuild + restart
 docker compose logs -f brain                # follow
-cd brain && uv run --extra dev pytest -q    # 111 tests, all offline (fake LLM + mocked HTTP)
+cd brain && uv run --extra dev pytest -q    # 120 tests, all offline (fake LLM + mocked HTTP)
 cd brain && ruff check app tests
 docker compose run --rm -p 8765:8765 brain python -m app.google_auth [label]   # OAuth per account
 docker compose run --rm brain python -m app.seed_profile /data/profile/resume.docx
@@ -134,6 +134,25 @@ and who this sender is to him. That is what separates a programme he belongs to 
 someone is selling him. Dedup is by slug of the name plus aliases; a bracketed suffix
 ("Indian Space Association (ISA)") is an alias, not a second entity. Never fuzzy-match: a wrong
 merge is worse than a duplicate.
+
+## Shared memory
+
+`memory.py` + `routers/memory.py`, plan in `docs/JARVIS.md`. One table, `memory_record`, is the
+master copy of the memory every device shares; the Orchestrator keeps a replica per device and
+syncs through `/memory/changes?since=<seq>` (pull) and `/memory/batch` (push).
+
+- Every accepted write takes the next `seq` (unique). Unchanged content is not rewritten
+  (`fingerprint`), so the mirror can run every 2 minutes without filling the log.
+- Same uid from two places: newer `updated_at` wins, a tie keeps ours. A refused write is answered
+  with our copy (`record`) so the device converges. Deletes are tombstones.
+- `uid` is `<kind>:<slug>` for named things (the same on every device) and `<kind>:<random>` else.
+- `mirror()` copies graph entities/edges (`person:jayesh-daga`, `relation:a~rel~b`) and tasks
+  (`task:<id>`) in, and tombstones mirrored records whose row is gone (merged entities).
+  These are owned by the brain; other knowledge about them is a `fact` with `subject`.
+- Search is FTS5 (`memory_fts`, created in `init_fts`, not by `create_all`): all words, then any.
+  Name lookups (`resolve`) never use the any-word fallback; it matched made-up names.
+- `python -m app.memory_import notes/*.md` (or `POST /memory/import`) loads one markdown file per
+  project; bullets under a "Decisions" heading become `decision` records about it.
 
 ## Conventions
 

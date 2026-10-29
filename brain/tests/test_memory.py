@@ -36,7 +36,8 @@ def test_batch_newer_wins_older_is_ignored(client):
     # an older edit from the Mac arrives late: ignored
     r = client.post("/memory/batch", json={"device": "mac", "records": [
         {"uid": uid, "kind": "fact", "title": "stale mac edit", "updated_at": _iso(-20)}]})
-    assert not r.json()["results"][0]["accepted"]
+    refused = r.json()["results"][0]
+    assert not refused["accepted"] and refused["record"]["title"] == "laptop wrote this"
     # a newer one wins
     r = client.post("/memory/batch", json={"device": "mac", "records": [
         {"uid": uid, "kind": "fact", "title": "newer mac edit", "updated_at": _iso(0)}]})
