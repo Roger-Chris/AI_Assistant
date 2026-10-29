@@ -278,6 +278,13 @@ def _history(history: Optional[list[dict]]) -> list[dict]:
     return out
 
 
+# Spoken requests: the answer is read aloud, and the words came through speech recognition.
+VOICE_NOTE = ("\n\nThis request was spoken and your answer will be read aloud. Keep the answer to one to three short "
+              "plain sentences: no lists, tables, markdown or links (details can follow on screen only if essential). "
+              "The words came from speech recognition, so read misheard names generously: if a name is close to "
+              "someone or something in memory, check memory before saying you don't know it.")
+
+
 async def ask(text: str, *, source: str = "app", llm: Optional[LLM] = None,
               on_step: Optional[Callable[[str], None]] = None, history: Optional[list[dict]] = None) -> dict:
     hub = Hub()
@@ -293,6 +300,8 @@ async def ask(text: str, *, source: str = "app", llm: Optional[LLM] = None,
                            profile=profile, recall=recall, devices=await _devices(hub), actions=await _actions(hub),
                            steps=settings.agent_max_steps,
                            device_notes=("What the devices are: " + settings.agent_device_notes + "\n") if settings.agent_device_notes else "")
+    if source == "voice":
+        system += VOICE_NOTE
     messages: list[dict] = [{"role": "system", "content": system}, *_history(history), {"role": "user", "content": text}]
     seen: set[str] = set()
     steps: list[dict] = []

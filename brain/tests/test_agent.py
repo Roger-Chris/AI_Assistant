@@ -184,3 +184,11 @@ def test_unknown_tools_get_the_list_back():
     from app.agent import normalise
     assert normalise({"tool": "create_task", "args": {"title": "x"}}) == {"tool": "add_task", "args": {"title": "x"}}
     assert normalise({"answer": {"a": 1}}) == {"answer": '{"a": 1}'}
+
+
+async def test_spoken_requests_get_short_spoken_answers(hub):
+    script = Script([{"answer": "Done."}, {"answer": "Done."}])
+    await agent.ask("whats on today", llm=script, source="voice")
+    assert "read aloud" in script.seen[0][0]["content"] and "speech recognition" in script.seen[0][0]["content"]
+    await agent.ask("whats on today", llm=script, source="app")
+    assert "read aloud" not in script.seen[1][0]["content"]

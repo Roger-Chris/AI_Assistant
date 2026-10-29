@@ -18,7 +18,7 @@ class Turn(BaseModel):
 
 class Ask(BaseModel):
     text: str
-    source: str = "app"  # app | call | web
+    source: str = "app"  # app | voice | call | web (voice: short spoken answers)
     history: list[Turn] = []  # earlier turns of this conversation, oldest first (the app sends the last few)
 
 
