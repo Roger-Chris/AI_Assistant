@@ -195,7 +195,7 @@ Follow-ups: `/agent/ask` takes `history` (the app sends its last three exchanges
 the previous question too. `AGENT_DEVICE_NOTES` says what each device name is ("roger = the HP
 Omen laptop…") so "the laptop" resolves.
 
-- Thinking with ChatGPT instead of Gemini: `PLANNER_BASE_URL=hub` + `PLANNER_MODEL=codex` sends the planner's calls (thinking loop, brief, reviews) to the hub's `/v1/chat/completions`, which runs `codex exec` logged in with the owner's ChatGPT account (`claude` and `groq` work the same way). Calls get at least 240 s. `PLANNER_FALLBACK_*` (and `CLASSIFIER_FALLBACK_*`) is tried when the primary fails. Eval: `python -m app.agent_eval --model codex` (uses the real hub at `--hub`, default http://127.0.0.1:4317; the devices stay fake).
+- Thinking with ChatGPT instead of Gemini: `PLANNER_BASE_URL=hub` + `PLANNER_MODEL=codex` sends the planner's calls (thinking loop, brief, reviews) to the hub's `/v1/chat/completions`, which runs `codex exec` logged in with the owner's ChatGPT account (`claude` and `groq` work the same way; the brain sends them as `raw:codex` etc., a plain call with no Orchestrator run or phone alert). Calls get at least 240 s. `PLANNER_FALLBACK_*` (and `CLASSIFIER_FALLBACK_*`) is tried when the primary fails. Eval: `python -m app.agent_eval --model codex` (uses the real hub at `--hub`, default http://127.0.0.1:4317; the devices stay fake).
 
 ## Conventions
 

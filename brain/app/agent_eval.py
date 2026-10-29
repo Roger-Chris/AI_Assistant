@@ -332,7 +332,7 @@ def main() -> None:
     init_db()
     if not prof.api_keys:  # the planner shares the classifier's keys when it has none of its own
         prof = dataclasses.replace(prof, api_keys=_split(settings.classifier_api_keys) or _split(settings.classifier_api_key))
-    if args.model and prof.model != args.model:
+    if args.model and args.model not in HUB_MODELS:
         prof = dataclasses.replace(prof, model=args.model)
     if not prof.api_keys:
         raise SystemExit("no planner API key in .env (PLANNER_API_KEYS or CLASSIFIER_API_KEYS)")

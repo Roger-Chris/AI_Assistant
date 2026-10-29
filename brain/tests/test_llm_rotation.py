@@ -142,9 +142,9 @@ async def test_thinks_with_chatgpt_through_the_hub_and_falls_back_to_gemini(monk
     llm_mod._rings.clear()
 
     p = llm_mod.planner_profile()
-    assert p.base_url == "http://127.0.0.1:4317/v1" and p.model == "codex" and p.min_timeout >= 180
-    assert await LLM(p).complete([{"role": "user", "content": "hi"}]) == "from codex"
-    assert seen == [("127.0.0.1", "codex", "loopback")]
+    assert p.base_url == "http://127.0.0.1:4317/v1" and p.model == "raw:codex" and p.min_timeout >= 180
+    assert await LLM(p).complete([{"role": "user", "content": "hi"}]) == "from raw:codex"
+    assert seen == [("127.0.0.1", "raw:codex", "loopback")]
 
     hub_up["ok"] = False
     assert await LLM(p).complete([{"role": "user", "content": "hi"}]) == "from gemini-3.8-flash"
