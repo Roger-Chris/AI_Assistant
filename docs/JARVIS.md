@@ -137,11 +137,15 @@ open a URL or app, show a note. These need an app update.
 
 ## Build order
 
-| Phase | What | Where |
-|---|---|---|
-| M1 | `memory_record` + change log + FTS + `/memory/*` API; mirrors from graph and tasks; project importer | brain |
-| M2 | memory replica + sync + `/node/memory/*` proxy + MCP server; run memory → brain | hub |
-| A1 | `/node/act` with risk levels, safe list, approvals on the phone; shell, files, system, ai.run | hub |
-| T1 | thinking loop `/agent/ask`; Telegram free text and app chat go to it | brain + hub |
-| A2 | desktop app control, file index, file transfer between devices | hub |
-| P1 | phone actions (alarm, reminder, open) | mobile app |
+| Phase | What | Where | State |
+|---|---|---|---|
+| M1 | `memory_record` + change log + FTS + `/memory/*` API; mirrors from graph and tasks; project importer | brain | built 29 Oct |
+| M2 | memory replica + sync + `/node/memory/*` proxy + MCP server; run memory → brain | hub | built 29 Oct |
+| A1 | `/node/act` with risk levels, safe list, approvals on the phone; shell, files, system, ai.run | hub + app | built 29 Oct |
+| T1 | thinking loop `/agent/ask`; Telegram free text; hub `/api/assistant/ask` | brain + hub | built 29 Oct (app chat screen still to wire) |
+| A2 | desktop app control, file index, file transfer between devices | hub | next |
+| P1 | phone actions (alarm, reminder, open) | mobile app | next |
+
+Verified end to end on 29 Oct with the real brain and hub (stand-in model): a safe search ran on
+its own, a file write waited for Approve and ran once, a replayed approval was refused, and the
+work record synced into the brain's memory.

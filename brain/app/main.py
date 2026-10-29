@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from . import scheduler, telegram
 from .config import settings
 from .db import backfill_chats, init_db
-from .routers import alerts, ingest, memory, tasks, workers
+from .routers import agent, alerts, ingest, memory, tasks, workers
 from .routers import health as health_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -34,6 +34,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="AI_Assistant brain", version="0.1.0", lifespan=lifespan)
+app.include_router(agent.router)
 app.include_router(alerts.router)
 app.include_router(health_router.router)
 app.include_router(ingest.router)

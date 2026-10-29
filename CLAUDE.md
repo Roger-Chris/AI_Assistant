@@ -44,7 +44,7 @@ On the laptop (Docker):
 ```bash
 docker compose up --build -d brain bridge   # rebuild + restart
 docker compose logs -f brain                # follow
-cd brain && uv run --extra dev pytest -q    # 120 tests, all offline (fake LLM + mocked HTTP)
+cd brain && uv run --extra dev pytest -q    # 127 tests, all offline (fake LLM + mocked HTTP)
 cd brain && ruff check app tests
 docker compose run --rm -p 8765:8765 brain python -m app.google_auth [label]   # OAuth per account
 docker compose run --rm brain python -m app.seed_profile /data/profile/resume.docx
@@ -153,6 +153,22 @@ syncs through `/memory/changes?since=<seq>` (pull) and `/memory/batch` (push).
   Name lookups (`resolve`) never use the any-word fallback; it matched made-up names.
 - `python -m app.memory_import notes/*.md` (or `POST /memory/import`) loads one markdown file per
   project; bullets under a "Decisions" heading become `decision` records about it.
+
+## The thinking loop
+
+`agent.py` (`POST /agent/ask`, Telegram free text, the hub's `/api/assistant/ask` for the app).
+Recall (memory search for the request, into the prompt) → up to `AGENT_MAX_STEPS` JSON moves on
+the planner model, each a tool call or `{"answer"}` → a `work` record of what was asked and done.
+
+- Tools: `memory_search`, `memory_about`, `remember`, `tasks`, `add_task`, `act` (the hub's
+  `/api/act`, so any device's actions). There is deliberately no tool that approves anything:
+  risky actions come back `pending` and the loop must say they have NOT run.
+- JSON moves, not provider tool-calling: works on every OpenAI-compatible model with the same key
+  rotation, and the tests script it (`tests/test_agent.py`, `Hub.transport` for the hub).
+- Malformed replies and the step cap get 3 extra turns, so the model can still answer (a test
+  caught the cap eating the answer turn).
+- Telegram: only the chat in `TELEGRAM_CHAT_ID` reaches the loop. The chat id the bot learns from
+  /start is NOT trusted for this: whoever wrote last would become the owner.
 
 ## Conventions
 

@@ -97,5 +97,10 @@ class Settings(BaseSettings):
     # shared memory (memory.py): graph entities/edges and tasks copied in this often; 0 = off
     memory_mirror_minutes: int = 2
 
+    # the thinking loop (agent.py): POST /agent/ask, Telegram free text from the owner's chat
+    agent_enabled: bool = True
+    agent_max_steps: int = 8       # tool calls per request
+    agent_max_tokens: int = 2000   # per model turn; gemini-3.x spends part of it thinking
+
 
 settings = Settings()

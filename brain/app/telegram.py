@@ -95,10 +95,41 @@ async def _handle_message(m: dict) -> None:
                 reply = f"{'Muted' if c.muted else 'Unmuted'}: {c.name or c.chat_id}"
             except (IndexError, ValueError, AssertionError):
                 reply = "Usage: /mute <id> or /unmute <id> (ids from /chats)"
-        else:
+        elif text.startswith("/") or not text:
             reply = ("Commands: /tasks, /today, /brief, /done &lt;id&gt;, /chats, /mute &lt;id&gt;, /unmute &lt;id&gt;, "
-                     "/who &lt;name&gt;, /graph, /keys. Chat comes in Phase 2.")
+                     "/who &lt;name&gt;, /graph, /keys. Anything else you write goes to the assistant.")
+        else:
+            await _ask_agent(chat_id, text)
+            return
     await tg("sendMessage", chat_id=chat_id, text=reply, parse_mode="HTML")
+
+
+async def _ask_agent(chat_id: str, text: str) -> None:
+    """Free text goes to the thinking loop, which can act on the owner's devices: only the chat in
+    TELEGRAM_CHAT_ID may use it. (The chat id learned from /start is not enough: whoever wrote to
+    the bot last would count as the owner.)"""
+    if not settings.agent_enabled:
+        await tg("sendMessage", chat_id=chat_id, text="The assistant is switched off (AGENT_ENABLED).")
+        return
+    if not settings.telegram_chat_id:
+        await tg("sendMessage", chat_id=chat_id,
+                 text=f"Set TELEGRAM_CHAT_ID={chat_id} in the brain's .env (if this is your chat) to talk to the assistant here.")
+        return
+    if chat_id != str(settings.telegram_chat_id):
+        log.warning("telegram: free text from chat %s, which is not the owner's; ignored", chat_id)
+        return
+    from . import agent  # late: agent imports the LLM stack
+
+    await tg("sendChatAction", chat_id=chat_id, action="typing")
+    try:
+        res = await agent.ask(text, source="telegram")
+        reply = res["answer"]
+        if res["pending"]:
+            reply += "\n\n(Waiting for your Approve in the app.)"
+    except Exception as e:  # noqa: BLE001
+        log.exception("agent failed")
+        reply = f"Sorry, that failed: {e}"
+    await tg("sendMessage", chat_id=chat_id, text=reply[:4000])
 
 
 _ACK_LABEL = {"done": "✅ Done", "snooze": "⏰ Snoozed", "dismiss": "🙈 Not important"}
