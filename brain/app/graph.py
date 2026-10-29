@@ -420,7 +420,7 @@ async def nightly() -> dict:
 # ---------------------------------------------------------------- queries
 
 def describe(session: Session, name: str) -> str:
-    """For Telegram /who — what the graph knows about someone, and what is open with them."""
+    """What the graph knows about someone, and what is open with them."""
     k = slug(name)
     e = session.exec(select(Entity).where(or_(Entity.key == k, Entity.aliases.contains(k),  # type: ignore[union-attr]
                                               Entity.name.ilike(f"%{name}%")))).first()  # type: ignore[union-attr]

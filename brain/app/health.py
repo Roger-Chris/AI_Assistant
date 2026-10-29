@@ -3,7 +3,7 @@
 Checks (each one raises at most one NOTIFY alert a day, key `health:<name>:<local date>`, and its
 open alert is closed again once the check passes):
   hub    the Orchestrator hub (HUB_URL) has not answered for HEALTH_HUB_DOWN_MINUTES
-  reach  nothing can reach you: no ntfy, no Telegram and the hub is down (or not set up). This one
+  reach  nothing can reach you: no ntfy and the hub is down (or not set up). This one
          cannot be sent anywhere, so it is logged loudly and the dead-man ping reports a failure
          (healthchecks.io then emails you).
   disk   the data volume has less than HEALTH_MIN_FREE_GB free
@@ -85,9 +85,9 @@ def check_reach(hub: Optional[Check]) -> Check:
     if others:
         return Check("reach", True, "fallback: " + ", ".join(others))
     if hub is not None and hub.ok:
-        return Check("reach", True, "hub only (no ntfy or Telegram fallback)")
+        return Check("reach", True, "hub only (no ntfy fallback)")
     why = "the hub is down" if hub is not None else "HUB_URL is not set"
-    return Check("reach", False, f"nothing can reach you: {why} and neither NTFY_TOPIC nor Telegram is set up")
+    return Check("reach", False, f"nothing can reach you: {why} and NTFY_TOPIC is not set up")
 
 
 def check_disk() -> Check:
@@ -167,7 +167,7 @@ async def run(now: Optional[datetime] = None) -> list[Check]:
                 continue
             log.warning("health: %s failing: %s", c.name, c.detail)
             if c.name == "reach":
-                log.error("!!! NOTHING CAN REACH THE OWNER: %s. Set NTFY_TOPIC or TELEGRAM_BOT_TOKEN.", c.detail)
+                log.error("!!! NOTHING CAN REACH THE OWNER: %s. Set NTFY_TOPIC as a fallback.", c.detail)
             if not c.alert:
                 continue
             key = f"health:{c.name}:{day}"

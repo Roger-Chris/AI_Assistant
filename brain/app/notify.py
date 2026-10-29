@@ -1,8 +1,7 @@
-"""What happened, turned into alerts (alerts.py decides how loudly), plus the Telegram transport.
+"""What happened, turned into alerts (alerts.py decides how loudly and delivers them to the app).
 
 Quiet by default: a new task interrupts you only when it is high priority or due within a day;
-updates and completions are silent (the app and the morning brief show them). Telegram is the
-fallback channel when the Orchestrator hub's phone app is not set up.
+updates and completions are silent (the app and the morning brief show them).
 """
 from __future__ import annotations
 
@@ -11,52 +10,13 @@ from datetime import timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
 
-import httpx
 from sqlmodel import Session
 
 from . import alerts
 from .config import settings
-from .db import Message, Note, Task, utcnow
+from .db import Message, Task, utcnow
 
 log = logging.getLogger("brain.notify")
-TG = "https://api.telegram.org/bot{token}/{method}"
-
-
-def _chat_id(session: Optional[Session]) -> str:
-    if settings.telegram_chat_id:
-        return settings.telegram_chat_id
-    if session:
-        n = session.get(Note, "telegram_chat_id")
-        if n:
-            return n.value
-    return ""
-
-
-async def tg(method: str, session: Optional[Session] = None, **params) -> Optional[dict]:
-    if not settings.telegram_bot_token:
-        return None
-    # long-poll calls pass `timeout` (seconds Telegram holds the request); give the client headroom
-    http_timeout = float(params.get("timeout", 0)) + 15
-    async with httpx.AsyncClient(timeout=http_timeout) as c:
-        r = await c.post(TG.format(token=settings.telegram_bot_token, method=method), json=params)
-        if r.status_code != 200:
-            log.warning("telegram %s failed: %s %s", method, r.status_code, r.text[:200])
-            return None
-        return r.json()
-
-
-async def send(text: str, session: Optional[Session] = None, buttons: Optional[list[list[dict]]] = None,
-               priority: str = "normal") -> bool:
-    """A Telegram message. True when Telegram took it."""
-    chat_id = _chat_id(session)
-    if not chat_id:
-        log.info("no telegram chat id yet; would send: %s", text[:120])
-        return False
-    params: dict = {"chat_id": chat_id, "text": text, "parse_mode": "HTML",
-                    "disable_notification": priority == "low"}
-    if buttons:
-        params["reply_markup"] = {"inline_keyboard": buttons}
-    return await tg("sendMessage", session, **params) is not None
 
 
 def fmt_due(task: Task) -> str:

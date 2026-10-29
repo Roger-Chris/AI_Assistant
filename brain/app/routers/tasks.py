@@ -1,4 +1,4 @@
-"""Task API — what the Android app (and Telegram, for now) talks to."""
+"""Task API — what the phone app talks to (through the hub's /api/brain/tasks)."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -28,7 +28,7 @@ class TaskOut(BaseModel):
     confidence: float
     source_chat: Optional[str] = None
     source_text: Optional[str] = None
-    # Where the task came from: "email" | "whatsapp" | "telegram", or "manual" when made by hand.
+    # Where the task came from: "email" | "whatsapp", or "manual" when made by hand.
     source: str = "manual"
     created_at: datetime
 

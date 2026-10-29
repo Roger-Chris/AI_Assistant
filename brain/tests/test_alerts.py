@@ -1,4 +1,4 @@
-"""Alerts: quiet hours, delivery to the hub (Telegram as fallback), and your answers."""
+"""Alerts: quiet hours, delivery to the hub (ntfy as fallback), and your answers."""
 import json
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -252,8 +252,8 @@ async def test_hub_and_ntfy_down_stays_pending(hub, ntfy):
 def test_channels_order(monkeypatch):
     monkeypatch.setattr(settings, "hub_url", "http://hub")
     monkeypatch.setattr(settings, "ntfy_topic", "t")
-    monkeypatch.setattr(settings, "telegram_bot_token", "x")
-    assert alerts.channels() == ["hub", "ntfy", "telegram"]
-    monkeypatch.setattr(settings, "ntfy_topic", "")
+    assert alerts.channels() == ["hub", "ntfy"]
     monkeypatch.setattr(settings, "hub_url", "")
-    assert alerts.channels() == ["telegram"]
+    assert alerts.channels() == ["ntfy"]
+    monkeypatch.setattr(settings, "ntfy_topic", "")
+    assert alerts.channels() == []

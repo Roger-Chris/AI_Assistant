@@ -46,7 +46,6 @@ def net(monkeypatch):
     monkeypatch.setattr(settings, "hub_url", "http://hub:4317")
     monkeypatch.setattr(settings, "orc_token", "orc-test")
     monkeypatch.setattr(settings, "ntfy_topic", "")
-    monkeypatch.setattr(settings, "telegram_bot_token", "")
     monkeypatch.setattr(settings, "healthcheck_url", "https://hc.example/ping/test-uuid")
     monkeypatch.setattr(settings, "health_min_free_gb", 0.0)
     monkeypatch.setattr(settings, "health_max_db_mb", 100_000)
@@ -134,7 +133,7 @@ async def test_reach_without_hub_url(net, monkeypatch):
     monkeypatch.setattr(settings, "hub_url", "")
     checks = by_name(await health.collect(now=ist(10)))
     assert "hub" not in checks and not checks["reach"].ok
-    monkeypatch.setattr(settings, "telegram_bot_token", "x")
+    monkeypatch.setattr(settings, "ntfy_topic", "x")
     assert by_name(await health.collect(now=ist(10)))["reach"].ok
 
 

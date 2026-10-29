@@ -4,7 +4,7 @@ then run once:
     deploy/linux/run brain python -m app.seed_profile ../data/brain/profile/resume.docx   # Linux
     docker compose run --rm brain python -m app.seed_profile /data/profile/resume.docx    # Docker
 
-Reads .docx, .txt or .md. Everything it learns is visible with /who and /graph in Telegram, and
+Reads .docx, .txt or .md. Everything it learns is visible in the app (Settings → Memory), and
 can be re-run safely: entities merge on name, they don't duplicate.
 """
 from __future__ import annotations

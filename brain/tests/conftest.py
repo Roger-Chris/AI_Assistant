@@ -9,7 +9,6 @@ _tmp = tempfile.mkdtemp()
 os.environ["DATABASE_URL"] = f"sqlite:///{_tmp}/test.db"
 os.environ["MEDIA_DIR"] = f"{_tmp}/media"
 os.environ["BRAIN_TOKEN"] = "test-token"
-os.environ["TELEGRAM_BOT_TOKEN"] = ""
 os.environ["OWNER_NAME"] = "Kishaunjith"
 
 from app import llm as llm_mod  # noqa: E402

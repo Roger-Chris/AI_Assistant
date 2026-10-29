@@ -108,8 +108,7 @@ assistant-brain`) afterwards. Nothing here signs in or creates accounts for you.
 
 ### A second way to your phone: ntfy
 
-Alerts go to the hub (the phone app) first. When the hub does not answer they go to ntfy, then
-Telegram.
+Alerts go to the hub (the phone app) first. When the hub does not answer they go to ntfy.
 
 1. Install the **ntfy** app on the phone (Play Store or F-Droid).
 2. Make a topic name nobody can guess: `openssl rand -hex 16` and prefix it, e.g. `roger-a1b2...`.
@@ -120,21 +119,21 @@ Telegram.
    (tapping opens the hub) and `NTFY_TOKEN` if your server needs one.
 
 Levels map to ntfy priorities: brief 3 (default), notification 4 (high), alarm and call 5 (max).
-Done / Snooze / Not important stay in the app and Telegram: ntfy cannot reach the loopback-only brain.
+Done / Snooze / Not important stay in the app: ntfy cannot reach the loopback-only brain.
 
 ### Health checks and a dead-man switch
 
 Every 5 minutes the brain checks itself (`brain/app/health.py`) and raises one notification a day
 per problem: hub not answering for 30 min, under 2 GB free on the data disk, `brain.db` over 1 GB,
-nightly backup failed or older than 36 h. If nothing at all can reach you (hub down, no ntfy, no
-Telegram) it logs `NOTHING CAN REACH THE OWNER` and tells healthchecks.io the check failed.
+nightly backup failed or older than 36 h. If nothing at all can reach you (hub down and no ntfy)
+it logs `NOTHING CAN REACH THE OWNER` and tells healthchecks.io the check failed.
 `curl -s -H "Authorization: Bearer $BRAIN_TOKEN" localhost:8000/health/detail` shows the results.
 
 For the case where the whole machine dies:
 
 1. Sign up at https://healthchecks.io (free), **Add Check**: period 5 minutes, grace 15 minutes.
 2. Copy its ping URL (`https://hc-ping.com/<uuid>`) into `.env` as `HEALTHCHECK_URL`.
-3. Under Integrations, make sure email (or their phone app / Telegram) is on.
+3. Under Integrations, make sure email (or their phone app) is on.
 
 When the pings stop, healthchecks.io tells you.
 

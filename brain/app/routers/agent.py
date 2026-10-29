@@ -13,7 +13,7 @@ router = APIRouter(prefix="/agent", tags=["agent"], dependencies=[Depends(requir
 
 class Ask(BaseModel):
     text: str
-    source: str = "app"  # app | telegram | call | web
+    source: str = "app"  # app | call | web
 
 
 @router.post("/ask")

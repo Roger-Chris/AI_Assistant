@@ -7,7 +7,7 @@ events, keeps the schedule, and reaches the phone — push now, calls for urgent
 brain/    always-on orchestrator. CPU-only. Production on the Linux machine, dev on the HP.
 bridge/   WhatsApp linked-device bridge (Baileys). Read-only. Forwards messages to the brain.
 worker/   GPU / laptop-only jobs (Whisper, local model). Runs on the HP when it's on. Phase 4.
-android/  the phone app. Phase 5. Telegram is the interim remote.
+android/  not used: the phone app is the Orchestrator app (../Orchestrator/mobile), through its hub.
 ```
 
 Rule that keeps moving hosts trivial: **nothing in `brain/`, `bridge/` or `docker-compose.yml`
@@ -24,18 +24,17 @@ steps below are for running it on the Windows laptop.
    - `OWNER_NAME` — your name as people write it in chats
    - `CLASSIFIER_API_KEY` — a Gemini key from AI Studio (free tier is fine for this)
    - `PLANNER_API_KEY` — OpenRouter (only used for the daily brief for now)
-   - `TELEGRAM_BOT_TOKEN` — from @BotFather. Then send `/start` to your bot once the brain
-     is up; it replies with your chat id, put that in `TELEGRAM_CHAT_ID`.
+   - `HUB_URL` / `ORC_TOKEN` — the Orchestrator hub, which is how the phone app reaches the brain.
 2. `docker compose up --build brain` — check `http://localhost:8000/health`.
 3. In another terminal, `docker compose up bridge` (attached) and scan the QR from
    WhatsApp → Linked devices. The session persists in `data/bridge-auth/` — back it up.
 4. Send yourself a WhatsApp message like "remind me to submit the form tomorrow 5pm".
-   Within a few seconds Telegram shows the extracted task with Keep / Not-a-task buttons.
+   Within a few seconds the app shows the extracted task under Tasks with Keep / Not a task.
 5. `docker compose up -d` for both once it works.
 
 Without Docker, on Linux: `deploy/linux/install.sh` (see [deploy/linux/README.md](deploy/linux/README.md)).
 
-## API (what the Android app will use)
+## API (what the phone app uses, through the hub's /api/brain/*)
 
 All routes need `Authorization: Bearer $BRAIN_TOKEN`.
 
@@ -81,7 +80,7 @@ you belong to from a webinar someone is selling you.
 Seed it: put your CV at `data/brain/profile/resume.docx` and run
 `deploy/linux/run brain python -m app.seed_profile ../data/brain/profile/resume.docx` on Linux
 (with Docker: `docker compose run --rm brain python -m app.seed_profile /data/profile/resume.docx`).
-Inspect it: `/graph` and `/who <name>` in Telegram.
+Inspect it in the app: Settings → Memory.
 
 ## Data & privacy
 

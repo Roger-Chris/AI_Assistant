@@ -18,7 +18,7 @@ Decided 2026-10-29. This is the plan the code follows; `CLAUDE.md` describes wha
 ```
                     ┌──────────────── Linux machine (always on) ────────────────┐
  WhatsApp, Gmail ──▶│ BRAIN (Python, AI_Assistant/brain)                         │
- Telegram, phone    │  • memory master  (memory_record + change log, FTS search) │
+ the phone app      │  • memory master  (memory_record + change log, FTS search) │
                     │  • thinking loop  (recall → plan → act → remember)          │
                     │  • perception, tasks, alerts, watcher (as today)           │
                     │            ▲ 127.0.0.1:8000                                │
@@ -125,7 +125,7 @@ open a URL or app, show a note. These need an app update.
 
 ## 3. Thinking loop (brain)
 
-`POST /agent/ask {text, from}` — used by Telegram, the phone app's chat and the call screen.
+`POST /agent/ask {text, source}` — used by the phone app's Assistant tab (through the hub) and later the call screen.
 
 1. **Recall:** search memory for the request (people, projects, recent work, open tasks).
 2. **Plan and act:** a tool-calling loop on the planner model (Gemini) with tools: `memory_search`,
@@ -142,7 +142,8 @@ open a URL or app, show a note. These need an app update.
 | M1 | `memory_record` + change log + FTS + `/memory/*` API; mirrors from graph and tasks; project importer | brain | built 29 Oct |
 | M2 | memory replica + sync + `/node/memory/*` proxy + MCP server; run memory → brain | hub | built 29 Oct |
 | A1 | `/node/act` with risk levels, safe list, approvals on the phone; shell, files, system, ai.run | hub + app | built 29 Oct |
-| T1 | thinking loop `/agent/ask`; Telegram free text; hub `/api/assistant/ask` | brain + hub | built 29 Oct (app chat screen still to wire) |
+| T1 | thinking loop `/agent/ask`; hub `/api/assistant/ask`; the app's Assistant tab | brain + hub + app | built 29 Oct |
+| T2 | Telegram removed; tasks, memory, WhatsApp chats, brief, key usage in the app | brain + hub + app | built 29 Oct |
 | A2 | desktop app control, file index, file transfer between devices | hub | next |
 | P1 | phone actions (alarm, reminder, open) | mobile app | next |
 

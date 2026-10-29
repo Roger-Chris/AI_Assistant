@@ -9,12 +9,11 @@ Every notification is an Alert with a level:
 Inside quiet hours only calls go out; the rest waits for the window to end.
 
 Delivery is the Orchestrator hub's POST /api/notify (the phone app); when the hub is not set up or
-does not answer, ntfy (NTFY_TOPIC), then Telegram. You answer an alert with done, snooze or dismiss ("not important"),
-from the app, Telegram or POST /alerts/{id}/ack.
+does not answer, ntfy (NTFY_TOPIC). You answer an alert with done, snooze or dismiss ("not important"),
+in the app (POST /alerts/{id}/ack through the hub).
 """
 from __future__ import annotations
 
-import html
 import logging
 from datetime import datetime, time, timedelta
 from typing import Optional
@@ -24,7 +23,6 @@ import httpx
 from sqlalchemy import or_
 from sqlmodel import Session, select
 
-from . import notify
 from .classifier import touch
 from .config import settings
 from .db import Alert, Task, TaskStatus, utcnow
@@ -104,15 +102,13 @@ async def raise_alert(session: Session, level: int, kind: str, title: str, body:
 
 def channels() -> list[str]:
     """The channels that are set up, in the order they are tried."""
-    return [name for name, on in (("hub", settings.hub_url), ("ntfy", settings.ntfy_topic),
-                                  ("telegram", settings.telegram_bot_token)) if on]
+    return [name for name, on in (("hub", settings.hub_url), ("ntfy", settings.ntfy_topic)) if on]
 
 
 async def deliver(session: Session, a: Alert) -> bool:
-    """Phone app through the hub, else ntfy, else Telegram. False, and still pending, when a channel
+    """Phone app through the hub, else ntfy. False, and still pending, when a channel
     is set up but none took it; the next deliver_due pass tries again."""
-    senders = {"hub": lambda: _to_hub(a), "ntfy": lambda: _to_ntfy(a),
-               "telegram": lambda: _to_telegram(session, a)}
+    senders = {"hub": lambda: _to_hub(a), "ntfy": lambda: _to_ntfy(a)}
     setup = channels()
     channel = "none" if not setup else None  # nowhere to send: it still shows in the app list and the brief
     for name in setup:
@@ -143,7 +139,7 @@ async def _to_hub(a: Alert) -> bool:
 
 
 async def _to_ntfy(a: Alert) -> bool:
-    """A push through ntfy. Answers (done/snooze/dismiss) stay in the app and Telegram: the brain is
+    """A push through ntfy. Answers (done/snooze/dismiss) stay in the app: the brain is
     loopback-only, so ntfy's action buttons could not reach it. Tapping opens NTFY_CLICK_URL."""
     msg: dict = {"topic": settings.ntfy_topic, "title": a.title, "message": a.body or a.title,
                  "priority": NTFY_PRIORITY.get(a.level, 3), "tags": [f"alert-{a.id}", a.kind]}
@@ -162,14 +158,6 @@ async def _to_ntfy(a: Alert) -> bool:
         log.warning("ntfy refused alert #%s: %s %s", a.id, r.status_code, r.text[:200])
         return False
     return True
-
-
-async def _to_telegram(session: Session, a: Alert) -> bool:
-    text = f"<b>{html.escape(a.title)}</b>" + (f"\n{html.escape(a.body)}" if a.body else "")
-    buttons = [[{"text": "✅ Done", "callback_data": f"alert:done:{a.id}"},
-                {"text": "⏰ Snooze", "callback_data": f"alert:snooze:{a.id}"},
-                {"text": "🙈 Not important", "callback_data": f"alert:dismiss:{a.id}"}]]
-    return await notify.send(text, session, buttons, priority="high" if a.level >= ALARM else "normal")
 
 
 async def deliver_due(session: Session, now: Optional[datetime] = None) -> int:

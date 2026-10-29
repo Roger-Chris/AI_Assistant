@@ -5,7 +5,7 @@ social and forum categories are excluded at the query — they never reach the b
 becomes `Message` rows with source="email" and runs through the same gate + classifier as
 WhatsApp, with an email-specific pre-filter for bulk senders that carry no bill/date/request.
 
-Chat id for an email is the sender address (per account), so `/mute` in Telegram works on senders.
+Chat id for an email is the sender address (per account), so muting a chat in the app works on senders.
 """
 from __future__ import annotations
 

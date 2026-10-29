@@ -19,7 +19,7 @@ class Message(SQLModel, table=True):
     """Every inbound message we've seen (WhatsApp for now; email later)."""
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    source: str = Field(index=True)  # "whatsapp" | "email" | "telegram"
+    source: str = Field(index=True)  # "whatsapp" | "email"
     external_id: str = Field(index=True, unique=True)  # WA message id, keeps ingest idempotent
     chat_id: str = Field(index=True)  # WA jid (xxx@s.whatsapp.net or xxx@g.us)
     chat_name: Optional[str] = None  # group subject or contact push name
@@ -85,7 +85,7 @@ class Alert(SQLModel, table=True):
     key: Optional[str] = Field(default=None, index=True)  # at most one open alert per key
     status: str = Field(default="pending", index=True)  # pending | sent | done | dismissed
     deliver_after: datetime = Field(default_factory=utcnow, index=True)  # quiet hours, snooze
-    channel: Optional[str] = None  # hub | telegram | none
+    channel: Optional[str] = None  # hub | ntfy | none
     ack: Optional[str] = None  # your answer: done | snooze | dismiss
     created_at: datetime = Field(default_factory=utcnow)
     sent_at: Optional[datetime] = None
@@ -154,7 +154,7 @@ class Mention(SQLModel, table=True):
 
 
 class Note(SQLModel, table=True):
-    """Free-form key/value scratch (e.g. telegram chat id discovered at runtime)."""
+    """Free-form key/value scratch (e.g. the last Gmail error per account)."""
 
     key: str = Field(primary_key=True)
     value: str

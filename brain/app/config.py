@@ -38,16 +38,13 @@ class Settings(BaseSettings):
     gmail_poll_minutes: int = 5
     gmail_backfill_days: int = 3  # first poll looks back this far
 
-    # telegram interim remote
-    telegram_bot_token: str = ""
-    telegram_chat_id: str = ""
     daily_brief_hour: int = 8
 
     # questions to you: surface only if unanswered after this many minutes (0 = surface at once)
     question_grace_minutes: int = 20
 
     # alerts (alerts.py): quiet by default, delivered through the Orchestrator hub's phone app
-    hub_url: str = ""  # e.g. http://127.0.0.1:4317; empty = Telegram only
+    hub_url: str = ""  # e.g. http://127.0.0.1:4317; empty = ntfy only (if set)
     orc_token: str = ""  # the hub's ORC_TOKEN (the hub also trusts plain loopback calls)
     quiet_hours: str = "23:00-07:00"  # local time; only calls (level 4) ring inside it. Empty = none
     snooze_minutes: int = 60
@@ -97,7 +94,7 @@ class Settings(BaseSettings):
     # shared memory (memory.py): graph entities/edges and tasks copied in this often; 0 = off
     memory_mirror_minutes: int = 2
 
-    # the thinking loop (agent.py): POST /agent/ask, Telegram free text from the owner's chat
+    # the thinking loop (agent.py): POST /agent/ask, from the app through the hub
     agent_enabled: bool = True
     agent_max_steps: int = 8       # tool calls per request
     agent_max_tokens: int = 2000   # per model turn; gemini-3.x spends part of it thinking

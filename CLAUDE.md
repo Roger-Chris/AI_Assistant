@@ -10,7 +10,7 @@ live in `.env` (`OWNER_NAME`, `OWNER_ALIASES`).
 brain/    always-on orchestrator. FastAPI + SQLModel(SQLite) + APScheduler. CPU-only, no GPU deps.
 bridge/   WhatsApp linked-device bridge (Baileys, Node 20). READ-ONLY: no send path exists.
 worker/   GPU / laptop-only jobs (Whisper, local model). Heartbeat stub only so far — Phase 4.
-android/  the phone app. Not started. Telegram is the interim remote.
+android/  unused: the phone app is the Orchestrator app (../Orchestrator/mobile), through its hub.
 data/     git-ignored: brain.db, WhatsApp session, media, Google tokens, the CV. Never commit.
 ```
 
@@ -44,7 +44,7 @@ On the laptop (Docker):
 ```bash
 docker compose up --build -d brain bridge   # rebuild + restart
 docker compose logs -f brain                # follow
-cd brain && uv run --extra dev pytest -q    # 127 tests, all offline (fake LLM + mocked HTTP)
+cd brain && uv run --extra dev pytest -q    # 130 tests, all offline (fake LLM + mocked HTTP)
 cd brain && ruff check app tests
 docker compose run --rm -p 8765:8765 brain python -m app.google_auth [label]   # OAuth per account
 docker compose run --rm brain python -m app.seed_profile /data/profile/resume.docx
@@ -76,7 +76,7 @@ due within 24 h; updates and completions are silent; unanswered questions and th
 list are notifications; the morning brief is level 1. `QUIET_HOURS` (default 23:00-07:00, local)
 holds everything below a call until it ends; the `alerts` job (every minute) sends held, snoozed
 and failed ones. Delivery: the Orchestrator hub's `POST /api/notify` (`HUB_URL`, set in
-`deploy/linux/native.env`), else Telegram with Done / Snooze / Not important buttons. The app
+`deploy/linux/native.env`), else ntfy. The app
 answers through `POST /alerts/{id}/ack`; done also finishes the task, dismiss is kept for
 learning later. One open alert per `key`; `supersede` closes the previous brief or overdue list.
 
@@ -104,7 +104,7 @@ tests wrote "now" are out of its windows.
 ## Looking after itself
 
 - Delivery order in `alerts.deliver`: hub → ntfy (`NTFY_TOPIC`, off when empty; level → ntfy
-  priority 3/4/5; tap opens `NTFY_CLICK_URL`; acks stay in the app/Telegram) → Telegram.
+  priority 3/4/5; tap opens `NTFY_CLICK_URL`; acks stay in the app).
   `alerts.channels()` lists what is set up. Tests mock ntfy with `alerts.ntfy_transport`.
 - `health.py`, every 5 min: hub down > 30 min, nothing can reach you (logged loudly + failing
   dead-man ping), disk < 2 GB, db > 1 GB, backup failed/stale (`data/brain/backup-status`). One
@@ -154,9 +154,18 @@ syncs through `/memory/changes?since=<seq>` (pull) and `/memory/batch` (push).
 - `python -m app.memory_import notes/*.md` (or `POST /memory/import`) loads one markdown file per
   project; bullets under a "Decisions" heading become `decision` records about it.
 
+## No Telegram
+
+Telegram was removed on 29 Oct 2026 (the owner's call: everything goes through the Orchestrator
+app). What it did now lives in the app: alerts (Home → Needs you), tasks to confirm (Tasks: Keep /
+Not a task / Done), the brief on demand, memory (/who, /graph → Memory), WhatsApp chat muting,
+model key usage, and free-text chat (Assistant tab). The brain side is `routers/control.py` plus
+`/tasks` and `/agent/ask`; the hub passes an allow-list of paths through `/api/brain/*`.
+Old TELEGRAM_* lines in a `.env` are ignored. Don't add another chat-app transport without asking.
+
 ## The thinking loop
 
-`agent.py` (`POST /agent/ask`, Telegram free text, the hub's `/api/assistant/ask` for the app).
+`agent.py` (`POST /agent/ask`; the app's Assistant tab reaches it through the hub's `/api/assistant/ask`).
 Recall (memory search for the request, into the prompt) → up to `AGENT_MAX_STEPS` JSON moves on
 the planner model, each a tool call or `{"answer"}` → a `work` record of what was asked and done.
 
@@ -167,8 +176,6 @@ the planner model, each a tool call or `{"answer"}` → a `work` record of what 
   rotation, and the tests script it (`tests/test_agent.py`, `Hub.transport` for the hub).
 - Malformed replies and the step cap get 3 extra turns, so the model can still answer (a test
   caught the cap eating the answer turn).
-- Telegram: only the chat in `TELEGRAM_CHAT_ID` reaches the loop. The chat id the bot learns from
-  /start is NOT trusted for this: whoever wrote last would become the owner.
 
 ## Conventions
 
@@ -191,13 +198,12 @@ the planner model, each a tool call or `{"answer"}` → a `work` record of what 
 - Events whose time has already passed are never carded.
 - WhatsApp LID ids (`…@lid`) must be resolved to phone-number jids or the same contact appears twice.
 - `groupMetadata` per message hits WhatsApp's rate limit; fetch all group names once on connect.
-- Telegram long-poll passes `timeout=25`, so the HTTP client needs a longer timeout than that.
 - httpx's INFO log line contains the bot token — its logger is pinned to WARNING.
 - gemini-3.x spends most of a small `max_tokens` budget on thinking tokens, so a 120-token cap
   returned half a sentence ("Roger Christopher is a Computer"). Summary calls get 600, and
   `clean_summary` rejects a short line with no full stop rather than storing the stump.
 - The AI Studio usage dashboard is scoped to one Google Cloud project, so keys created in other
-  projects look unused there. `/keys` in Telegram reports the real per-key tally.
+  projects look unused there. Settings → Model key usage in the app (`GET /llm/usage`) reports the real per-key tally.
 - `ruff`'s default rule set drifts between releases; `[tool.ruff.lint] select` is pinned.
 
 ## Current state and next steps

@@ -9,7 +9,6 @@ from sqlalchemy import text
 from sqlmodel import Session, select
 
 from app import agent, memory
-from app import telegram as tgmod
 from app.config import settings
 from app.db import MemoryRecord, Task, engine
 
@@ -146,30 +145,3 @@ async def test_no_hub_is_said_plainly(monkeypatch):
 
 def test_endpoint_needs_the_token(client):
     assert client.post("/agent/ask", json={"text": "hi"}, headers={"Authorization": "Bearer nope"}).status_code == 401
-
-
-async def test_telegram_free_text_only_from_the_owner(monkeypatch):
-    sent: list[dict] = []
-
-    async def fake_tg(method, session=None, **params):
-        sent.append({"method": method, **params})
-        return {"ok": True}
-
-    asked: list[str] = []
-
-    async def fake_ask(text, **kw):
-        asked.append(text)
-        return {"answer": "on it", "steps": [], "pending": [{"action": "files.write"}]}
-
-    monkeypatch.setattr(tgmod, "tg", fake_tg)
-    monkeypatch.setattr(agent, "ask", fake_ask)
-    monkeypatch.setattr(settings, "telegram_chat_id", "")
-    await tgmod._handle_message({"chat": {"id": 555}, "text": "hello"})
-    assert asked == [] and "TELEGRAM_CHAT_ID=555" in sent[-1]["text"]  # no owner set: nobody is trusted
-    sent.clear()
-    monkeypatch.setattr(settings, "telegram_chat_id", "111")
-    await tgmod._handle_message({"chat": {"id": 999}, "text": "delete everything"})
-    assert asked == [] and sent == []  # a stranger gets nothing
-    await tgmod._handle_message({"chat": {"id": 111}, "text": "save the plan"})
-    assert asked == ["save the plan"]
-    assert "Waiting for your Approve" in sent[-1]["text"]
