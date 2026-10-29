@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import base64
 import html
+import json
 import logging
 import re
 from datetime import datetime, timedelta, timezone
@@ -180,10 +181,36 @@ async def poll_account(session: Session, label: str) -> dict:
     return {"stored": stored, "filtered": skipped, "classified": queued}
 
 
+def record_poll(session: Session, label: str, error: Optional[str], now: Optional[datetime] = None) -> None:
+    """The watcher's view of Gmail health: Note gmail_error_<label> holds {since, count, error}
+    while polls fail, and is removed by the first poll that works."""
+    key = f"gmail_error_{label}"
+    note = session.get(Note, key)
+    if error is None:
+        if note:
+            session.delete(note)
+            session.commit()
+        return
+    now = now or datetime.now(timezone.utc)
+    info = {"since": now.isoformat(), "count": 0}
+    if note:
+        try:
+            info = json.loads(note.value)
+        except ValueError:
+            pass
+    info["count"] = int(info.get("count", 0)) + 1
+    info["error"], info["last"] = error[:300], now.isoformat()
+    session.merge(Note(key=key, value=json.dumps(info)))
+    session.commit()
+
+
 async def poll_all() -> None:
     for label in accounts():
         with Session(engine) as session:
             try:
-                await poll_account(session, label)
-            except Exception:  # noqa: BLE001
+                res = await poll_account(session, label)
+                record_poll(session, label, f"skipped: {res['skipped']}" if "skipped" in res else None)
+            except Exception as e:  # noqa: BLE001
                 log.exception("gmail poll failed for %s", label)
+                session.rollback()
+                record_poll(session, label, f"{type(e).__name__}: {e}")

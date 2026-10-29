@@ -67,6 +67,19 @@ class Settings(BaseSettings):
     backup_repo: str = ""
     health_backup_max_hours: int = 36  # alert when the last good backup is older than this
 
+    # the watcher (watcher.py): deadlines at risk, broken promises, bills, renewals, health, calls
+    watch_enabled: bool = True
+    watch_minutes: int = 5
+    watch_whatsapp_silent_hours: int = 12  # no WhatsApp message this long (while it normally flows)
+    escalate_minutes: int = 5  # an unanswered alarm becomes a call after this long
+    calls_per_day: int = 2
+    watch_judge: bool = True  # ask the classifier model "worth interrupting now?" (8 s, rule wins on error)
+    watch_vip_chats: str = ""  # comma-separated chat/sender ids whose unanswered questions ring (alarm)
+
+    # background work (review.py)
+    review_enabled: bool = True  # weekly review (Sunday 18:00) and monthly noise report (1st, 09:00)
+    drafts_enabled: bool = False  # Gmail draft replies to personal questions; never sent
+
     # how many prior messages from the same chat to show the classifier
     context_window: int = 6
     # extra open tasks from other chats/senders offered for update/complete (confirmations often

@@ -1,4 +1,5 @@
-"""Scheduled jobs: the daily brief (planner model) and a catch-up classification sweep."""
+"""Scheduled jobs: the daily brief (planner model), a catch-up classification sweep, the watcher
+(watcher.py) and background reviews (review.py)."""
 from __future__ import annotations
 
 import logging
@@ -8,7 +9,7 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlmodel import Session, select
 
-from . import alerts, gcal, gmail, graph
+from . import alerts, gcal, gmail, graph, review, watcher
 from .classifier import classify_pending, touch
 from .config import settings
 from .db import Message, Task, TaskStatus, engine
@@ -101,6 +102,13 @@ def start() -> None:
     scheduler.add_job(health_check, "interval", minutes=5, id="health")
     scheduler.add_job(calendar_sync, "interval", minutes=2, id="calendar")
     scheduler.add_job(gmail.poll_all, "interval", minutes=settings.gmail_poll_minutes, id="gmail")
+    if settings.watch_enabled:
+        scheduler.add_job(watcher.watch, "interval", minutes=settings.watch_minutes, id="watcher")
+    if settings.review_enabled:
+        scheduler.add_job(review.weekly_review, "cron", day_of_week="sun", hour=18, minute=0, id="weekly")
+        scheduler.add_job(review.monthly_report, "cron", day=1, hour=9, minute=0, id="monthly")
+    if settings.drafts_enabled:
+        scheduler.add_job(review.drafts, "interval", minutes=10, id="drafts")
     if settings.graph_enabled:
         scheduler.add_job(graph.nightly, "cron", hour=settings.graph_hour, minute=15, id="graph")
     scheduler.start()

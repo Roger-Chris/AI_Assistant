@@ -94,8 +94,10 @@ async def new_task(session: Session, task: Task, src: Message) -> None:
         icon = "📧 " + icon
     quote = (src.text or "")[:200]
     body = f"Due {fmt_due(task)} · {task.kind.value} · from {_where(src)}: “{quote}”"
-    await alerts.raise_alert(session, new_task_level(task), "new_task", f"{icon} {task.title}", body,
-                             task_id=task.id, key=f"task:{task.id}")
+    from . import watcher  # watcher imports this module; it applies what "Not important" taught it
+
+    await watcher.interrupt(session, new_task_level(task), "new_task", f"{icon} {task.title}", body,
+                            task_id=task.id, key=f"task:{task.id}", judge=False)
     task.notified = True
     session.add(task)
     session.commit()
@@ -111,10 +113,16 @@ async def task_completed(session: Session, task: Task, src: Message) -> None:
 
 
 async def unanswered_question(session: Session, task: Task, src: Optional[Message], minutes: int) -> None:
+    """A notification; an alarm when the sender is close to you (family, professor, manager, VIP
+    list: watcher.close_relation). Three "Not important" answers for this chat make it quieter."""
+    from . import watcher  # watcher imports this module
+
     who = (src.sender_name or src.chat_name or "someone") if src else "someone"
     quote = ((src.text or "") if src else task.title)[:160]
-    await alerts.raise_alert(session, alerts.NOTIFY, "question", f"❓ {who} is waiting",
-                             f"“{quote}” · {minutes} min, no reply from you.", task_id=task.id,
-                             key=f"question:{task.id}")
+    why = watcher.close_relation(session, src)
+    level = alerts.ALARM if why else alerts.NOTIFY
+    body = f"“{quote}” · {minutes} min, no reply from you." + (f" ({who}: {why})" if why else "")
+    await watcher.interrupt(session, level, "question", f"❓ {who} is waiting", body, task_id=task.id,
+                            key=f"question:{task.id}", judge=False)
     task.notified = True
     session.add(task)
