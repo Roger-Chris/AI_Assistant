@@ -94,5 +94,8 @@ class Settings(BaseSettings):
     graph_hour: int = 3               # local hour the nightly pass runs
     graph_max_tokens: int = 8000      # a CV with 15+ entities needs room; truncation loses relations
 
+    # shared memory (memory.py): graph entities/edges and tasks copied in this often; 0 = off
+    memory_mirror_minutes: int = 2
+
 
 settings = Settings()

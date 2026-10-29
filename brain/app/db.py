@@ -160,6 +160,27 @@ class Note(SQLModel, table=True):
     value: str
 
 
+class MemoryRecord(SQLModel, table=True):
+    """One record in the shared memory pool (memory.py, docs/JARVIS.md). Replicated to every device."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    uid: str = Field(unique=True, index=True)  # "<kind>:<slug>" for named things, "<kind>:<random>" else
+    kind: str = Field(index=True)
+    title: str = ""
+    body: str = ""
+    data: str = ""  # JSON, kind-specific
+    tags: str = ""
+    aliases: str = ""
+    subject: Optional[str] = Field(default=None, index=True)  # uid this record is about
+    source: str = Field(default="manual", index=True)
+    device: str = "brain"
+    deleted: bool = Field(default=False, index=True)
+    fingerprint: str = ""
+    seq: int = Field(default=0, unique=True, index=True)  # position in the change log
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
+
+
 # --- engine -------------------------------------------------------------------
 
 def _make_engine():
@@ -178,6 +199,9 @@ engine = _make_engine()
 def init_db() -> None:
     SQLModel.metadata.create_all(engine)
     _migrate_columns()
+    from .memory import init_fts
+
+    init_fts()
 
 
 def _migrate_columns() -> None:
