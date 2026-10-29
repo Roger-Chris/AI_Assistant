@@ -56,7 +56,7 @@ Decisions:
 
 ## Tests
 
-96 passed / 96 (61 existing + 28 in `tests/test_watcher.py` + 7 in
+96 passed / 96 before the merge; 111 / 111 after merging Phase 5 from origin/main (61 existing + 28 in `tests/test_watcher.py` + 7 in
 `tests/test_review.py`). `ruff check app tests` clean. Watcher tests run at a time 30 days ahead
 of the real clock so rows other tests create "now" fall outside its windows.
 

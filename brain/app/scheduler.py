@@ -13,6 +13,7 @@ from . import alerts, gcal, gmail, graph, review, watcher
 from .classifier import classify_pending, touch
 from .config import settings
 from .db import Message, Task, TaskStatus, engine
+from .health import run as health_check
 from .llm import LLM, planner_profile
 from .notify import fmt_due, unanswered_question
 
@@ -98,6 +99,7 @@ def start() -> None:
     scheduler.add_job(catch_up, "interval", minutes=10, id="catch_up")
     scheduler.add_job(unanswered_sweep, "interval", minutes=5, id="unanswered")
     scheduler.add_job(deliver_alerts, "interval", minutes=1, id="alerts")
+    scheduler.add_job(health_check, "interval", minutes=5, id="health")
     scheduler.add_job(calendar_sync, "interval", minutes=2, id="calendar")
     scheduler.add_job(gmail.poll_all, "interval", minutes=settings.gmail_poll_minutes, id="gmail")
     if settings.watch_enabled:

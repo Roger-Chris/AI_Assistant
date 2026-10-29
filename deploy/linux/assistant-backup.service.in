@@ -1,0 +1,12 @@
+[Unit]
+Description=AI_Assistant nightly backup (restic)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment="PATH=@PATH@"
+ExecStart=@REPO@/deploy/linux/backup.sh
+# A hard disk shared with the brain and the hub: stay out of their way.
+Nice=10
+IOSchedulingClass=idle

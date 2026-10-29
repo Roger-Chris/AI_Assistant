@@ -24,6 +24,7 @@ def clean(monkeypatch):
     monkeypatch.setattr(settings, "quiet_hours", "23:00-07:00")
     yield
     alerts.hub_transport = None
+    alerts.ntfy_transport = None
     with Session(engine) as s:
         for a in s.exec(select(Alert)).all():
             s.delete(a)
@@ -49,6 +50,32 @@ def hub(monkeypatch):
     monkeypatch.setattr(settings, "hub_url", "http://hub:4317")
     alerts.hub_transport = httpx.MockTransport(handle)
     return h
+
+
+@pytest.fixture
+def ntfy(monkeypatch):
+    """A fake ntfy server; set .up = False to make it refuse."""
+    class Ntfy:
+        up = True
+        got: list[dict] = []
+        headers: list[dict] = []
+    n = Ntfy()
+    n.got, n.headers = [], []
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        assert req.method == "POST" and req.url.path == "/"
+        if not n.up:
+            return httpx.Response(500)
+        n.got.append(json.loads(req.content))
+        n.headers.append(dict(req.headers))
+        return httpx.Response(200, json={"id": "x"})
+
+    monkeypatch.setattr(settings, "ntfy_url", "https://ntfy.example")
+    monkeypatch.setattr(settings, "ntfy_topic", "test-topic-abc")
+    monkeypatch.setattr(settings, "ntfy_token", "")
+    monkeypatch.setattr(settings, "ntfy_click_url", "")
+    alerts.ntfy_transport = httpx.MockTransport(handle)
+    return n
 
 
 def test_quiet_hours_window():
@@ -177,3 +204,56 @@ def test_only_urgent_or_soon_new_tasks_interrupt():
     assert notify.new_task_level(Task(title="x", priority="normal")) == alerts.SILENT
     assert notify.new_task_level(Task(title="x", priority="normal", due_at=now + timedelta(hours=2))) == alerts.NOTIFY
     assert notify.new_task_level(Task(title="x", priority="high")) == alerts.NOTIFY
+
+
+async def test_hub_down_falls_back_to_ntfy(hub, ntfy, monkeypatch):
+    hub.up = False
+    monkeypatch.setattr(settings, "ntfy_click_url", "http://100.64.0.1:4317")
+    monkeypatch.setattr(settings, "ntfy_token", "tk_test")
+    with Session(engine) as s:
+        a = await alerts.raise_alert(s, alerts.ALARM, "deadline", "Fee due in 1 h", "pay it", now=ist(10))
+        assert a.status == "sent" and a.channel == "ntfy"
+    msg = ntfy.got[0]
+    assert msg["topic"] == "test-topic-abc" and msg["title"] == "Fee due in 1 h" and msg["message"] == "pay it"
+    assert msg["priority"] == 5 and f"alert-{a.id}" in msg["tags"]
+    assert msg["click"] == "http://100.64.0.1:4317" and msg["actions"][0]["url"] == "http://100.64.0.1:4317"
+    assert ntfy.headers[0]["authorization"] == "Bearer tk_test"
+
+
+async def test_hub_up_means_ntfy_is_not_used(hub, ntfy):
+    with Session(engine) as s:
+        a = await alerts.raise_alert(s, alerts.NOTIFY, "question", "via hub", now=ist(10))
+        assert a.channel == "hub"
+    assert not ntfy.got
+
+
+async def test_ntfy_alone_priorities_and_no_click(ntfy):
+    with Session(engine) as s:
+        b = await alerts.raise_alert(s, alerts.BRIEF, "brief", "Brief", "today", now=ist(10))
+        n = await alerts.raise_alert(s, alerts.NOTIFY, "question", "Question", now=ist(10))
+        assert b.channel == n.channel == "ntfy"
+    assert [m["priority"] for m in ntfy.got] == [3, 4]
+    assert "click" not in ntfy.got[0] and "actions" not in ntfy.got[0]
+    assert ntfy.got[1]["message"] == "Question"  # an empty body still says something
+    assert "authorization" not in ntfy.headers[0]
+
+
+async def test_hub_and_ntfy_down_stays_pending(hub, ntfy):
+    hub.up = ntfy.up = False
+    with Session(engine) as s:
+        a = await alerts.raise_alert(s, alerts.NOTIFY, "question", "nobody home", now=ist(10))
+        assert a.status == "pending"
+        ntfy.up = True
+        assert await alerts.deliver_due(s, now=ist(10, 1)) == 1
+        s.refresh(a)
+        assert a.channel == "ntfy"
+
+
+def test_channels_order(monkeypatch):
+    monkeypatch.setattr(settings, "hub_url", "http://hub")
+    monkeypatch.setattr(settings, "ntfy_topic", "t")
+    monkeypatch.setattr(settings, "telegram_bot_token", "x")
+    assert alerts.channels() == ["hub", "ntfy", "telegram"]
+    monkeypatch.setattr(settings, "ntfy_topic", "")
+    monkeypatch.setattr(settings, "hub_url", "")
+    assert alerts.channels() == ["telegram"]
