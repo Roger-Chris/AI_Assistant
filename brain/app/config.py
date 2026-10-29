@@ -98,6 +98,9 @@ class Settings(BaseSettings):
     agent_enabled: bool = True
     agent_max_steps: int = 8       # tool calls per request
     agent_max_tokens: int = 2000   # per model turn; gemini-3.x spends part of it thinking
+    # what each device name is, in your words, so "the laptop" finds the right one, e.g.
+    # "roger = the HP Omen laptop (Windows, RTX 5050); linux-hub = the always-on Linux machine; mac-mini = the Mac mini"
+    agent_device_notes: str = ""
 
 
 settings = Settings()

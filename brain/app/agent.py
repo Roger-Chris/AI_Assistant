@@ -29,7 +29,7 @@ from sqlmodel import Session, select
 from . import graph, memory
 from .config import settings
 from .db import Task, TaskKind, TaskStatus, engine
-from .llm import LLM, extract_json, planner_profile
+from .llm import _FENCE, LLM, extract_json, planner_profile
 
 log = logging.getLogger("brain.agent")
 
@@ -44,7 +44,7 @@ WHAT MEMORY ALREADY HOLDS THAT MAY MATTER (search for more if needed)
 
 DEVICES (name: status)
 {devices}
-
+{device_notes}
 ACTIONS YOU CAN RUN ON A DEVICE with the `act` tool (risk: safe runs at once, ask waits for his Approve on the phone)
 {actions}
 
@@ -58,13 +58,74 @@ TOOLS — reply with exactly ONE JSON object per turn, nothing else:
 {{"answer": "your reply to him"}}
 
 RULES
-- Use memory before saying you don't know something about his life, work, people or projects.
-- Prefer safe actions. Ask for an `ask` action only when he asked for that change; give a clear one-line reason.
-- An action that comes back pending is NOT done: tell him it is waiting for his approval on the phone.
-- Never invent results. If a tool failed, say so plainly.
-- Never send messages to other people, never handle passwords, never delete anything.
-- When he tells you something worth keeping (a preference, a decision, a fact), save it with `remember`.
-- Answers: short, direct, plain text. At most {steps} tool calls, then answer with what you have."""
+- Use memory before saying you don't know something about his life, work, people or projects. If memory has nothing, say so; never guess personal facts, numbers or IDs.
+- Use the exact device names above. An offline device cannot run anything: say it is offline instead of trying.
+- Prefer safe actions. Use an `ask` action only when he asked for that change; give a clear one-line reason.
+- Something is done only when its RESULT says OK. PENDING means waiting for his Approve on the phone: say exactly that. REFUSED or FAILED: say so plainly.
+- There is no delete action, and you cannot send messages (WhatsApp, email, SMS) to anyone: say so, and offer what you can (a draft, a list of what to delete).
+- Never handle passwords.
+- `add_task` due_at is his LOCAL time, e.g. 2026-11-02T17:00 for 5 pm. Work dates out from "Now" above.
+- When he tells you something worth keeping (a preference, a decision, a fact, a date), save it with `remember`.
+- Answers: short, direct, plain text, in his words. At most {steps} tool calls, then answer with what you have."""
+
+
+# ---------------------------------------------------------------- reading the model's move
+
+TOOLS = ("memory_search", "memory_about", "remember", "tasks", "add_task", "act")
+# Names models reach for instead of ours. Mapped silently; anything else gets the list back.
+ALIASES = {
+    "search_memory": "memory_search", "memory.search": "memory_search", "search": "memory_search",
+    "recall": "memory_search", "memory": "memory_search", "about": "memory_about",
+    "memory.about": "memory_about", "lookup": "memory_about", "save": "remember", "note": "remember",
+    "remember_fact": "remember", "list_tasks": "tasks", "get_tasks": "tasks", "open_tasks": "tasks",
+    "create_task": "add_task", "new_task": "add_task", "task": "add_task", "device_action": "act",
+    "run_action": "act", "action": "act", "device": "act",
+}
+
+
+def first_json_object(raw: str) -> Optional[dict]:
+    """The first complete JSON object in a reply. Models sometimes write prose around it, fence it,
+    or send two objects at once; we take the first and ignore the rest."""
+    text = _FENCE.sub("", str(raw or "").strip())
+    dec = json.JSONDecoder()
+    i = text.find("{")
+    while i != -1:
+        try:
+            obj, _ = dec.raw_decode(text, i)
+            if isinstance(obj, dict):
+                return obj
+        except json.JSONDecodeError:
+            pass
+        i = text.find("{", i + 1)
+    try:
+        obj = extract_json(text)  # a truncated object: salvage what is there
+        return obj if isinstance(obj, dict) else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def normalise(move: dict) -> dict:
+    """{"answer": str} or {"tool": name, "args": {...}}, whatever shape the model used."""
+    if "answer" in move and move["answer"] not in (None, ""):
+        a = move["answer"]
+        return {"answer": a if isinstance(a, str) else json.dumps(a, ensure_ascii=False)}
+    tool = str(move.get("tool") or move.get("name") or move.get("function") or "").strip()
+    args = move.get("args") if isinstance(move.get("args"), dict) else \
+        move.get("arguments") if isinstance(move.get("arguments"), dict) else {}
+    if tool == "answer":
+        return {"answer": str(args.get("text") or args.get("answer") or "")}
+    if ALIASES.get(tool, tool) == "act" and "action" in move:
+        # flattened device call: the action's own arguments sit in args/arguments
+        return {"tool": "act", "args": {"device": move.get("device"), "action": move["action"], "args": dict(args),
+                                        "reason": move.get("reason")}}
+    tool = ALIASES.get(tool, tool)
+    # a flattened call: {"tool": "act", "device": "omen", "action": "files.find", ...}
+    extra = {k: v for k, v in move.items() if k not in ("tool", "name", "function", "args", "arguments", "thought", "why", "reason_for_step")}
+    for k, v in extra.items():
+        args.setdefault(k, v)
+    if tool == "act" and isinstance(args.get("arguments"), dict) and "args" not in args:
+        args["args"] = args.pop("arguments")
+    return {"tool": tool, "args": args}
 
 
 # ---------------------------------------------------------------- hub client
@@ -127,8 +188,16 @@ def _trim(v: Any, n: int = 3000) -> str:
 def _open_tasks(session: Session) -> str:
     rows = session.exec(select(Task).where(Task.status.in_([TaskStatus.open, TaskStatus.pending_confirmation]))  # type: ignore[attr-defined]
                         .order_by(Task.due_at.is_(None), Task.due_at).limit(30)).all()  # type: ignore[attr-defined]
-    return "\n".join(f"#{t.id} {t.title} (due {t.due_at.isoformat() if t.due_at else 'no date'}, {t.status.value})"
-                     for t in rows) or "No open tasks."
+    tz = ZoneInfo(settings.tz)
+
+    def due(t: Task) -> str:
+        if not t.due_at:
+            return "no date"
+        d = t.due_at if t.due_at.tzinfo else t.due_at.replace(tzinfo=timezone.utc)
+        return d.astimezone(tz).strftime("%a %d %b %H:%M")
+
+    return "\n".join(f"#{t.id} {t.title} (due {due(t)}, {'unconfirmed' if t.status == TaskStatus.pending_confirmation else 'open'}"
+                     f"{', ' + t.priority if t.priority != 'normal' else ''})" for t in rows) or "No open tasks."
 
 
 async def run_tool(name: str, args: dict, hub: Hub, used: list[dict]) -> str:
@@ -191,24 +260,41 @@ async def run_tool(name: str, args: dict, hub: Hub, used: list[dict]) -> str:
             return (f"PENDING: waiting for {settings.owner_name}'s approval on the phone ({a.get('summary')}). "
                     "It has NOT run yet.")
         return f"REFUSED: {res.get('error', 'unknown reason')}"
-    return f"Unknown tool {name!r}."
+    return f"Unknown tool {name!r}. Use one of: {', '.join(TOOLS)}, or answer with {{\"answer\": ...}}."
 
 
 # ---------------------------------------------------------------- the loop
 
+HISTORY_TURNS = 6  # earlier messages of this conversation given to the model, for follow-ups
+
+
+def _history(history: Optional[list[dict]]) -> list[dict]:
+    out = []
+    for h in (history or [])[-HISTORY_TURNS:]:
+        role = h.get("role")
+        content = " ".join(str(h.get("content") or "").split())[:1500]
+        if role in ("user", "assistant") and content:
+            out.append({"role": role, "content": content if role == "user" else json.dumps({"answer": content}, ensure_ascii=False)})
+    return out
+
+
 async def ask(text: str, *, source: str = "app", llm: Optional[LLM] = None,
-              on_step: Optional[Callable[[str], None]] = None) -> dict:
+              on_step: Optional[Callable[[str], None]] = None, history: Optional[list[dict]] = None) -> dict:
     hub = Hub()
     model = llm or LLM(planner_profile(), timeout=120)
     with Session(engine) as session:
         owner = graph.owner(session)
         profile = (owner.summary if owner and owner.summary else f"{settings.owner_name}.")
-        recall = memory.as_prompt(memory.search(session, text, limit=6), 2500) or "(nothing yet)"
+        # a follow-up ("and the other one?") recalls with the previous question too
+        prev = " ".join(h.get("content", "") for h in (history or [])[-2:] if h.get("role") == "user")
+        recall = memory.as_prompt(memory.search(session, f"{prev} {text}".strip(), limit=6), 2500) or "(nothing yet)"
     tz = ZoneInfo(settings.tz)
     system = SYSTEM.format(owner=settings.owner_name, now=datetime.now(tz).strftime("%a %d %b %Y %H:%M"), tz=settings.tz,
                            profile=profile, recall=recall, devices=await _devices(hub), actions=await _actions(hub),
-                           steps=settings.agent_max_steps)
-    messages: list[dict] = [{"role": "system", "content": system}, {"role": "user", "content": text}]
+                           steps=settings.agent_max_steps,
+                           device_notes=("What the devices are: " + settings.agent_device_notes + "\n") if settings.agent_device_notes else "")
+    messages: list[dict] = [{"role": "system", "content": system}, *_history(history), {"role": "user", "content": text}]
+    seen: set[str] = set()
     steps: list[dict] = []
     used: list[dict] = []
     answer: Optional[str] = None
@@ -216,23 +302,28 @@ async def ask(text: str, *, source: str = "app", llm: Optional[LLM] = None,
     # malformed reply and still answer after hitting the cap.
     for _ in range(settings.agent_max_steps + 3):
         raw = await model.complete(messages, json_mode=True, temperature=0.2, max_tokens=settings.agent_max_tokens)
-        try:
-            move = extract_json(raw)
-        except Exception:  # noqa: BLE001
-            move = None
-        if not isinstance(move, dict):
+        found = first_json_object(raw)
+        move = normalise(found) if found else None
+        if not move or (not move.get("answer") and not move.get("tool")):
             messages += [{"role": "assistant", "content": str(raw)[:2000]},
                          {"role": "user", "content": "Reply with exactly one JSON object: a tool call or {\"answer\": ...}."}]
             continue
         if move.get("answer"):
             answer = str(move["answer"]).strip()
             break
-        tool = str(move.get("tool") or "")
-        args = move.get("args") if isinstance(move.get("args"), dict) else {}
+        tool, args = move["tool"], move["args"]
         if len(steps) >= settings.agent_max_steps:
             messages += [{"role": "assistant", "content": json.dumps(move)},
                          {"role": "user", "content": "No more tool calls. Answer now with {\"answer\": ...}."}]
             continue
+        key = f"{tool} {json.dumps(args, sort_keys=True, ensure_ascii=False)}"
+        if key in seen:
+            # the same call again would give the same result: models loop on this
+            messages += [{"role": "assistant", "content": json.dumps(move, ensure_ascii=False)},
+                         {"role": "user", "content": "You already made exactly this call; its result is above. "
+                                                     "Use it, try something different, or answer."}]
+            continue
+        seen.add(key)
         if on_step:
             on_step(f"{tool} {json.dumps(args, ensure_ascii=False)[:120]}")
         observed = await run_tool(tool, args, hub, used)

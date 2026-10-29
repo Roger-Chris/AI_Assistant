@@ -44,7 +44,7 @@ On the laptop (Docker):
 ```bash
 docker compose up --build -d brain bridge   # rebuild + restart
 docker compose logs -f brain                # follow
-cd brain && uv run --extra dev pytest -q    # 130 tests, all offline (fake LLM + mocked HTTP)
+cd brain && uv run --extra dev pytest -q    # 137 tests, all offline (fake LLM + mocked HTTP)
 cd brain && ruff check app tests
 docker compose run --rm -p 8765:8765 brain python -m app.google_auth [label]   # OAuth per account
 docker compose run --rm brain python -m app.seed_profile /data/profile/resume.docx
@@ -176,6 +176,24 @@ the planner model, each a tool call or `{"answer"}` → a `work` record of what 
   rotation, and the tests script it (`tests/test_agent.py`, `Hub.transport` for the hub).
 - Malformed replies and the step cap get 3 extra turns, so the model can still answer (a test
   caught the cap eating the answer turn).
+
+## Tuning the thinking loop
+
+`python -m app.agent_eval` (on Linux: `deploy/linux/run brain python -m app.agent_eval`) runs 17
+realistic requests through the real loop on the planner model, each with its own seeded memory and
+tasks in a throwaway database and a FAKE hub (canned devices and action results; nothing runs on a
+device). It checks the actions and tools used, what must not happen (delete, messaging, writes when
+asked to read, acting on an offline device), approvals left pending, the answer text and, for
+tasks/remember, the database. `--model`, `--repeat`, `--only`, `--out report.json`.
+Tune the prompt (`SYSTEM` in agent.py), rerun, compare models. Add a case for every real failure.
+The cloud sandbox cannot reach Gemini or Groq (egress allowlist): run it on the laptop or Linux.
+
+What the loop tolerates (all tested): prose or fences around the JSON, two objects in one reply
+(first wins), tool-name aliases (`search_memory`, `create_task`…), flattened `act` calls, an
+`{"tool": "answer"}` move, the same call twice (not rerun; the model is told to use the result).
+Follow-ups: `/agent/ask` takes `history` (the app sends its last three exchanges); recall searches
+the previous question too. `AGENT_DEVICE_NOTES` says what each device name is ("roger = the HP
+Omen laptop…") so "the laptop" resolves.
 
 ## Conventions
 

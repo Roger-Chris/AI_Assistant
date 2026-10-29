@@ -106,8 +106,8 @@ async def test_bad_json_gets_a_second_chance_and_the_step_limit_holds(hub, monke
     script = Script([
         "I think I should search",  # not JSON
         {"tool": "tasks", "args": {}},
-        {"tool": "tasks", "args": {}},
-        {"tool": "tasks", "args": {}},  # over the limit: refused, told to answer
+        {"tool": "memory_search", "args": {"query": "plate"}},
+        {"tool": "memory_search", "args": {"query": "today"}},  # over the limit: refused, told to answer
         {"answer": "Done looking."},
     ])
     res = await agent.ask("what's on my plate?", llm=script)
@@ -145,3 +145,42 @@ async def test_no_hub_is_said_plainly(monkeypatch):
 
 def test_endpoint_needs_the_token(client):
     assert client.post("/agent/ask", json={"text": "hi"}, headers={"Authorization": "Bearer nope"}).status_code == 401
+
+
+async def test_the_same_call_twice_is_not_run_again(hub):
+    script = Script([
+        {"tool": "act", "args": {"device": "omen", "action": "files.find", "args": {"name": "zzthrust"}}},
+        {"tool": "act", "args": {"device": "omen", "action": "files.find", "args": {"name": "zzthrust"}}},
+        {"answer": "It's D:/evtol/zzthrust_test.csv."},
+    ])
+    res = await agent.ask("find my zzthrust sheet", llm=script)
+    assert len(hub) == 1 and len(res["steps"]) == 1
+    assert "already made exactly this call" in script.seen[2][-1]["content"]
+
+
+async def test_messy_replies_are_understood(hub):
+    script = Script([
+        'Sure! ```json\n{"tool": "search_memory", "args": {"query": "zzmessy"}}\n``` then {"answer": "x"}',
+        '{"tool": "act", "device": "omen", "action": "files.find", "arguments": {"name": "zzthrust"}}',
+        '{"tool": "answer", "args": {"text": "Found it."}}',
+    ])
+    res = await agent.ask("zzmessy", llm=script)
+    assert [s["tool"] for s in res["steps"]] == ["memory_search", "act"]
+    assert hub[-1] == {"node": "omen", "action": "files.find", "args": {"name": "zzthrust"}, "reason": None}
+    assert res["answer"] == "Found it."
+
+
+async def test_follow_ups_see_the_conversation(hub):
+    script = Script([{"answer": "Opening it needs your approval."}])
+    history = [{"role": "user", "content": "where is my zzthrust sheet?"},
+               {"role": "assistant", "content": "D:/evtol/zzthrust_test.csv on omen."}]
+    await agent.ask("open it", llm=script, history=history)
+    sent = script.seen[0]
+    assert [m["role"] for m in sent] == ["system", "user", "assistant", "user"]
+    assert "zzthrust_test.csv" in sent[2]["content"] and sent[3]["content"] == "open it"
+
+
+def test_unknown_tools_get_the_list_back():
+    from app.agent import normalise
+    assert normalise({"tool": "create_task", "args": {"title": "x"}}) == {"tool": "add_task", "args": {"title": "x"}}
+    assert normalise({"answer": {"a": 1}}) == {"answer": '{"a": 1}'}
