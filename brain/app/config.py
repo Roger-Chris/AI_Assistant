@@ -111,5 +111,16 @@ class Settings(BaseSettings):
     # "roger = the HP Omen laptop (Windows, RTX 5050); linux-hub = the always-on Linux machine; mac-mini = the Mac mini"
     agent_device_notes: str = ""
 
+    # the learning harness (learn.py, docs/LEARNING.md): episodes, feedback, lessons, nightly reflection + evaluation gate
+    learn_enabled: bool = True
+    learn_hour: int = 3                    # nightly pass (local time), after the graph's
+    learn_trial_confidence: float = 0.7    # reflected preferences/facts at or above go on trial; the rest wait for you
+    learn_off_after_losses: int = 2        # a lesson thumbed down this often (and more than up) turns itself off
+    learn_eval_enabled: bool = True        # run the evaluation gate when lessons are on trial (costs model calls)
+    learn_eval_builtin: bool = True        # include agent_eval's built-in cases, not only the learnt ones
+    learn_eval_model: str = ""             # e.g. codex; empty = PLANNER_MODEL
+    learn_eval_tolerance: float = 0.05     # pass-rate drop allowed before trial lessons are rolled back
+    learn_eval_timeout_minutes: int = 40
+
 
 settings = Settings()

@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from . import scheduler
 from .config import settings
 from .db import backfill_chats, init_db
-from .routers import agent, alerts, control, ingest, memory, tasks, workers
+from .routers import agent, alerts, control, ingest, learn, memory, tasks, workers
 from .routers import health as health_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -36,6 +36,7 @@ app.include_router(alerts.router)
 app.include_router(control.router)
 app.include_router(health_router.router)
 app.include_router(ingest.router)
+app.include_router(learn.router)
 app.include_router(memory.router)
 app.include_router(tasks.router)
 app.include_router(workers.router)

@@ -41,7 +41,7 @@ from sqlmodel import Session, select  # noqa: E402
 
 from . import agent, memory  # noqa: E402
 from .config import settings  # noqa: E402
-from .db import Entity, MemoryRecord, Task, TaskKind, TaskStatus, engine, init_db  # noqa: E402
+from .db import Entity, Lesson, MemoryRecord, Task, TaskKind, TaskStatus, engine, init_db  # noqa: E402
 from .llm import HUB_MODELS, LLM, _split, planner_profile  # noqa: E402
 
 # ---------------------------------------------------------------- the fake hub
@@ -270,6 +270,28 @@ def judge(case: Case, res: dict, hub: Hub) -> list[str]:
     return errors
 
 
+def learned_cases(raw: list[dict]) -> list[Case]:
+    """Regression cases the learning harness made from real episodes that went wrong."""
+    out = []
+    for c in raw:
+        out.append(Case(name=f"learned_{c.get('id')}", request=str(c.get("request") or ""), why=str(c.get("why") or "learnt"),
+                        seed=list(c.get("seed") or []), history=list(c.get("history") or []),
+                        must_tool=list(c.get("must_tool") or []), must_act=list(c.get("must_act") or []),
+                        must_not_act=list(c.get("must_not_act") or []), answer_has=list(c.get("answer_has") or []),
+                        answer_not=list(c.get("answer_not") or [])))
+    return [c for c in out if c.request]
+
+
+def load_lessons(raw: list[dict]) -> None:
+    """The lessons being evaluated, into the throwaway database, so agent.ask puts them in its prompt."""
+    with Session(engine) as s:
+        for ls in raw:
+            s.add(Lesson(kind=str(ls.get("kind") or "preference"), text=str(ls.get("text") or ""),
+                         when=str(ls.get("when") or ""), status=str(ls.get("status") or "active"),
+                         confidence=float(ls.get("confidence") or 0.7)))
+        s.commit()
+
+
 async def run_case(case: Case, llm: LLM, reset: bool = True) -> dict:
     if reset:  # tests share their database and pass reset=False
         _reset()
@@ -314,12 +336,20 @@ def main() -> None:
     ap.add_argument("--only", help="comma-separated case names")
     ap.add_argument("--out", help="write the full report as JSON here")
     ap.add_argument("--list", action="store_true", help="list the cases and exit")
+    ap.add_argument("--learned", help="JSON from the learning harness (learn.export): lessons to put in the prompt "
+                    "and learnt regression cases to run")
+    ap.add_argument("--learned-only", action="store_true", help="run only the learnt cases")
     args = ap.parse_args()
     if args.list:
         for c in CASES:
             print(f"{c.name:<18} {c.why}")
         return
-    cases = [c for c in CASES if not args.only or c.name in args.only.split(",")]
+    learned = {"lessons": [], "cases": []}
+    if args.learned:
+        with open(args.learned) as f:
+            learned = json.load(f)
+    cases = [] if args.learned_only else [c for c in CASES if not args.only or c.name in args.only.split(",")]
+    cases += learned_cases(learned.get("cases") or [])
     # The model may itself be served by the real hub (PLANNER_BASE_URL=hub / --model codex): build
     # that profile against the real hub before the devices are pointed at the fake one.
     settings.hub_url = args.hub
@@ -330,6 +360,7 @@ def main() -> None:
     settings.agent_device_notes = ("omen = the HP Omen laptop (Windows, RTX 5050); linux-hub = the always-on Linux "
                                    "machine; mac-mini = the Mac mini")
     init_db()
+    load_lessons(learned.get("lessons") or [])
     if not prof.api_keys:  # the planner shares the classifier's keys when it has none of its own
         prof = dataclasses.replace(prof, api_keys=_split(settings.classifier_api_keys) or _split(settings.classifier_api_key))
     if args.model and args.model not in HUB_MODELS:

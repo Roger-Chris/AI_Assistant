@@ -181,6 +181,67 @@ class MemoryRecord(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow, index=True)
 
 
+class Episode(SQLModel, table=True):
+    """One request to the thinking loop and how it went: what the learning harness (learn.py) learns from."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    at: datetime = Field(default_factory=utcnow, index=True)
+    source: str = "app"  # app | voice | call | web | eval
+    request: str = ""
+    answer: str = ""
+    tools: str = ""  # JSON: [{tool, args}]
+    lessons: str = ""  # comma-separated lesson ids that were in the prompt
+    outcome: str = Field(default="", index=True)  # "" unknown | good | bad
+    feedback: str = ""  # the owner's correction or note
+    signals: str = ""  # JSON list: thumbs, correction, denied, …
+    reflected: bool = Field(default=False, index=True)
+
+
+class Lesson(SQLModel, table=True):
+    """Something learnt from episodes: a preference, a fact, a skill (how to do a kind of job) or a rule.
+
+    Lifecycle: proposed (waits for the owner) -> trial (in the prompt, must survive the next evaluation)
+    -> active; off when the owner turns it off, it keeps failing, or an evaluation rolls it back."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    kind: str = "preference"  # preference | fact | skill | rule | voice
+    text: str = ""
+    when: str = ""  # words that say when it applies; empty = always
+    status: str = Field(default="proposed", index=True)  # proposed | trial | active | off
+    confidence: float = 0.5
+    episodes: str = ""  # comma-separated ids it came from
+    uses: int = 0
+    wins: int = 0
+    losses: int = 0
+    note: str = ""  # why it changed status last
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class LearnedCase(SQLModel, table=True):
+    """A regression case made from a real episode that went wrong: the evaluation keeps checking it."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    episode_id: Optional[int] = None
+    request: str = ""
+    spec: str = ""  # JSON: history, must_tool, must_act, must_not_act, answer_has, answer_not, seed
+    why: str = ""
+    active: bool = True
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class HarnessRun(SQLModel, table=True):
+    """One pass of the learning harness: a reflection or an evaluation, and what it changed."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    at: datetime = Field(default_factory=utcnow, index=True)
+    kind: str = ""  # reflect | evaluate
+    ok: bool = True
+    passed: int = 0
+    total: int = 0
+    summary: str = ""  # JSON: what it did
+
+
 # --- engine -------------------------------------------------------------------
 
 def _make_engine():

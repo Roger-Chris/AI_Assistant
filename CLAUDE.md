@@ -233,3 +233,10 @@ the Omen worker (Whisper `/transcribe` + heartbeat — `perceive.py` already pre
 worker), then urgent phone calls (Twilio decision still open), then the Android app.
 
 Build log and roadmap: https://claude.ai/code/artifact/d11e93a1-b748-4d23-8eb4-3c9e9c23791d
+
+## The learning harness (learn.py, docs/LEARNING.md)
+
+- Every `agent.ask` is an `Episode`; the reply carries `episode_id` and the `lessons` that were in its prompt. The app's 👍/👎 posts `/learn/episodes/{id}/feedback`; a correction ("no, I meant…") within 30 minutes marks the previous episode bad; "from now on…" (`learn.TEACH`) becomes an active lesson at once.
+- Lessons (preference, fact, skill, rule, voice) go into the prompt by `when` words (`learn.relevant`, at most 8; voice only for spoken requests), after the rules, with "the rules win".
+- Nightly (`LEARN_HOUR`:40): `settle` (2+ 👎 and more 👎 than 👍 -> off), `reflect` (model -> lessons + regression cases from bad episodes), and when something is on trial, `evaluate`: `agent_eval --learned` in a subprocess with the lessons and learnt cases; pass rate below the last good run minus `LEARN_EVAL_TOLERANCE` rolls trial lessons back, else promotes them.
+- `learn.UNSAFE` keeps anything about approvals, passwords, tokens, deleting, payments or ignoring rules out of lessons at every entry point. Keep it that way.

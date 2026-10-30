@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlmodel import Session, select
 
-from . import alerts, gcal, gmail, graph, memory, review, watcher
+from . import alerts, gcal, gmail, graph, learn, memory, review, watcher
 from .classifier import classify_pending, touch
 from .config import settings
 from .db import Message, Task, TaskStatus, engine
@@ -111,6 +111,9 @@ def start() -> None:
         scheduler.add_job(review.drafts, "interval", minutes=10, id="drafts")
     if settings.graph_enabled:
         scheduler.add_job(graph.nightly, "cron", hour=settings.graph_hour, minute=15, id="graph")
+    if settings.learn_enabled:
+        # the learning harness: settle, reflect on the day's signals, evaluate lessons on trial (learn.py)
+        scheduler.add_job(learn.nightly, "cron", hour=settings.learn_hour, minute=40, id="learn")
     if settings.memory_mirror_minutes:
         # graph + tasks -> shared memory; a plain function, so APScheduler runs it in a thread
         scheduler.add_job(memory.mirror_now, "interval", minutes=settings.memory_mirror_minutes, id="memory")

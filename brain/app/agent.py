@@ -26,7 +26,7 @@ from zoneinfo import ZoneInfo
 import httpx
 from sqlmodel import Session, select
 
-from . import graph, memory
+from . import graph, learn, memory
 from .config import settings
 from .db import Task, TaskKind, TaskStatus, engine
 from .llm import _FENCE, LLM, extract_json, planner_profile
@@ -325,6 +325,15 @@ async def ask(text: str, *, source: str = "app", llm: Optional[LLM] = None,
     with Session(engine) as session:
         owner = graph.owner(session)
         profile = (owner.summary if owner and owner.summary else f"{settings.owner_name}.")
+        # the learning harness: a correction marks the last answer bad, "from now on…" teaches at once,
+        # and what was learnt that fits this request goes into the prompt (learn.py)
+        learn.notice_correction(session, text, source)
+        taught = learn.teach(session, text)
+        lessons = learn.relevant(session, text, source)
+        episode = learn.start(session, text, source, lessons)
+        learnt = learn.as_prompt(lessons, settings.owner_name)
+        lesson_refs = [{"id": ls.id, "text": ls.text} for ls in lessons]
+        episode_id, taught_id = episode.id, (taught.id if taught else None)
         # a follow-up ("and the other one?") recalls with the previous question too
         prev = " ".join(h.get("content", "") for h in (history or [])[-2:] if h.get("role") == "user")
         recall = memory.as_prompt(memory.search(session, f"{prev} {text}".strip(), limit=6), 2500) or "(nothing yet)"
@@ -335,6 +344,10 @@ async def ask(text: str, *, source: str = "app", llm: Optional[LLM] = None,
                            device_notes=("What the devices are: " + settings.agent_device_notes + "\n") if settings.agent_device_notes else "")
     if source == "voice":
         system += VOICE_NOTE
+    system += learnt
+    if taught_id:
+        system += (f"\n\nHe just taught you something (saved as lesson #{taught_id}): acknowledge it in a few words "
+                   "and follow it from now on.")
     messages: list[dict] = [{"role": "system", "content": system}, *_history(history), {"role": "user", "content": text}]
     seen: set[str] = set()
     steps: list[dict] = []
@@ -377,7 +390,8 @@ async def ask(text: str, *, source: str = "app", llm: Optional[LLM] = None,
             f"Last thing I did: {steps[-1]['tool']}." if steps else "")
     pending = [u for u in used if u["status"] == "pending"]
     _remember(text, answer, steps, source)
-    return {"answer": answer, "steps": steps, "pending": pending}
+    learn.finish(episode_id, answer, steps, pending)
+    return {"answer": answer, "steps": steps, "pending": pending, "episode_id": episode_id, "lessons": lesson_refs}
 
 
 def _remember(text: str, answer: str, steps: list[dict], source: str) -> None:
