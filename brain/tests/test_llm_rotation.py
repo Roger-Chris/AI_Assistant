@@ -166,3 +166,18 @@ def test_hub_auto_is_routed_by_the_hub(monkeypatch):
     monkeypatch.setattr(s, "planner_model", "gemini-3.8-flash")
     monkeypatch.setattr(s, "planner_base_url", "https://example.test/v1")
     assert llm_mod.planner_profile().model == "gemini-3.8-flash"  # not through the hub: untouched
+
+
+def test_hub_gets_orc_token_not_the_planner_keys(monkeypatch):
+    # from another machine the hub needs ORC_TOKEN; the planner's own (Gemini) keys got 401
+    s = llm_mod.settings
+    monkeypatch.setattr(s, "hub_url", "http://100.104.185.17:4317")
+    monkeypatch.setattr(s, "planner_base_url", "hub")
+    monkeypatch.setattr(s, "planner_model", "codex")
+    monkeypatch.setattr(s, "planner_api_key", "")
+    monkeypatch.setattr(s, "planner_api_keys", "gemini-key")
+    monkeypatch.setattr(s, "planner_fallback_base_url", "")
+    monkeypatch.setattr(s, "orc_token", "orc-token")
+    assert llm_mod.planner_profile().api_keys == ["orc-token"]
+    monkeypatch.setattr(s, "orc_token", "")  # on the hub's own machine: loopback is trusted, keys as before
+    assert llm_mod.planner_profile().api_keys == ["gemini-key"]

@@ -106,8 +106,9 @@ def _profile(name: str, base_url: str, keys: list[str], model: str) -> Profile:
     via_hub = base_url.strip().lower() == "hub"
     if via_hub:
         base_url = f"{hub}/v1"
-        # the hub trusts loopback calls; from another machine it needs its token
-        keys = keys or [settings.orc_token or "loopback"]
+        # the hub trusts loopback calls; from another machine it needs its token. ORC_TOKEN wins over the
+        # profile's keys: PLANNER_API_KEYS are usually the Gemini keys, and the hub answered them with 401.
+        keys = [settings.orc_token] if settings.orc_token else (keys or ["loopback"])
         # raw: one plain call to that session, not an Orchestrator run (no plan, no phone alert)
         if model in HUB_MODELS:
             model = f"raw:{model}"

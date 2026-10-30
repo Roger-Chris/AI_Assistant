@@ -58,7 +58,7 @@ ACTIONS = [
     ("files.write", "ask", "Write a text file. An existing file is backed up first."),
     ("files.copy", "ask", "Copy a file. Refuses to replace an existing file."),
     ("files.move", "ask", "Move or rename a file or folder. Refuses to replace anything."),
-    ("shell.run", "ask", "Run a command. Safe-listed read-only commands (git status, git log, nvidia-smi…) run at once; anything else asks."),
+    ("shell.run", "ask", "Run a command; put the folder in args.cwd, not in the command. Safe-listed read-only commands (git status, git log, nvidia-smi…) run at once only when the command starts with them; anything else asks."),
     ("apps.list", "safe", "The busiest running programs on this device."),
     ("apps.open", "ask", "Open a file, folder, web address or program on this device's screen."),
     ("ai.run", "safe", "Give a task to an AI tool on this device: claude (Claude Code), codex (ChatGPT), gemini (Antigravity). write=false is read-only and runs at once; write=true lets it change files and asks first."),
@@ -252,7 +252,7 @@ def judge(case: Case, res: dict, hub: Hub) -> list[str]:
     for t in case.must_tool:
         if t not in tools:
             errors.append(f"did not use {t} (used {tools or 'nothing'})")
-    answer = res["answer"]
+    answer = res["answer"].replace("’", "'")  # models write don’t as often as don't
     for rx in case.answer_has:
         if not re.search(rx, answer, re.I | re.S):
             errors.append(f"answer lacks /{rx}/")
