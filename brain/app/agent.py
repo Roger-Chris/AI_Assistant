@@ -55,6 +55,7 @@ TOOLS — reply with exactly ONE JSON object per turn, nothing else:
 {{"tool": "tasks", "args": {{}}}}   (his open tasks)
 {{"tool": "add_task", "args": {{"title": "...", "due_at": "optional ISO 8601 local time", "details": "optional"}}}}
 {{"tool": "act", "args": {{"device": "name", "action": "files.find", "args": {{...}}, "reason": "one line why"}}}}
+{{"tool": "phone", "args": {{"kind": "alarm|reminder|open_app|call|sms|file", "...": "alarm: hour, minute, label; reminder: at (ISO local), text; open_app: app, package?; call: number, name?; sms: number, text, name?; file: path on the hub", "reason": "one line why"}}}}
 {{"tool": "build", "args": {{"name": "the app's name", "spec": "what to build or change", "repo": "git folder on the hub's machine (not needed when continuing)", "continue": false, "agent": "optional: claude|codex", "device": "optional device name"}}}}
 {{"answer": "your reply to him"}}
 
@@ -65,6 +66,7 @@ RULES
 - Something is done only when its RESULT says OK. PENDING means waiting for his Approve on the phone: say exactly that. REFUSED or FAILED: say so plainly.
 - There is no delete action, and you cannot send messages (WhatsApp, email, SMS) to anyone: say so, and offer what you can (a draft, a list of what to delete).
 - Never handle passwords.
+- `phone` puts something on his phone's Phone screen; it happens only when he taps Do it. A call or text only opens the dialer or the message filled in; he presses call or send. Say it is WAITING on his phone.
 - `build` makes or changes an app on its own git branch (coding agent, tests, a second model's review); it never touches main. "Continue the X app" = `build` with "continue": true. It takes a while: say it has STARTED and that he gets a notice with a preview to check and Merge on the phone. You cannot merge.
 - `add_task` due_at is his LOCAL time, e.g. 2026-11-02T17:00 for 5 pm. Work dates out from "Now" above.
 - When he tells you something worth keeping (a preference, a decision, a fact, a date), save it with `remember`.
@@ -73,7 +75,7 @@ RULES
 
 # ---------------------------------------------------------------- reading the model's move
 
-TOOLS = ("memory_search", "memory_about", "remember", "tasks", "add_task", "act", "build")
+TOOLS = ("memory_search", "memory_about", "remember", "tasks", "add_task", "act", "build", "phone")
 # Names models reach for instead of ours. Mapped silently; anything else gets the list back.
 ALIASES = {
     "search_memory": "memory_search", "memory.search": "memory_search", "search": "memory_search",
@@ -262,6 +264,17 @@ async def run_tool(name: str, args: dict, hub: Hub, used: list[dict]) -> str:
             return (f"PENDING: waiting for {settings.owner_name}'s approval on the phone ({a.get('summary')}). "
                     "It has NOT run yet.")
         return f"REFUSED: {res.get('error', 'unknown reason')}"
+    if name == "phone":
+        body = {k: v for k, v in args.items() if v is not None}
+        try:
+            p = await hub.post("/api/phone/actions", body, timeout=30)
+        except httpx.HTTPStatusError as e:
+            detail = e.response.json().get("error", "") if e.response.headers.get("content-type", "").startswith("application/json") else ""
+            return f"The hub would not queue it: {detail or e}"
+        except Exception as e:  # noqa: BLE001
+            return f"The hub could not reach the phone list: {e}"
+        used.append({"device": "phone", "action": f"phone.{body.get('kind')}", "status": "pending"})
+        return f"WAITING on his phone: {p.get('summary')}. It has NOT happened yet; he taps Do it on the Phone screen."
     if name == "build":
         body = {k: v for k, v in {
             "name": str(args.get("name") or "").strip(), "spec": str(args.get("spec") or "").strip(),

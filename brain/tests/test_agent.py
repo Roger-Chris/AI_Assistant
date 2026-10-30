@@ -59,6 +59,12 @@ def hub(monkeypatch):
                                                  "result": {"ok": True, "output": "D:/evtol/zzthrust_test.csv"}})
             return httpx.Response(200, json={"status": "pending", "node": body["node"], "action": body["action"],
                                              "approval": {"id": "a1", "summary": "Write 5 characters to plan.md"}})
+        if req.url.path == "/api/phone/actions":
+            body = json.loads(req.content)
+            calls.append({"phone": body})
+            if body.get("kind") == "teleport":
+                return httpx.Response(400, json={"error": "not a phone action: kind: Invalid input"})
+            return httpx.Response(200, json={"id": "p1", "summary": "Set an alarm for 06:30", "status": "pending"})
         if req.url.path == "/api/builds":
             body = json.loads(req.content)
             calls.append({"build": body})
@@ -215,3 +221,16 @@ async def test_build_starts_on_the_hub_and_is_reported_as_started(hub):
     assert "needs the app's name and what to build" in script.seen[3][-1]["content"]
     assert res["pending"] == []  # a started build is not waiting on an approval
     assert [st["tool"] for st in res["steps"]][:1] == ["build"]
+
+
+async def test_phone_actions_wait_for_his_tap(hub):
+    script = Script([
+        {"tool": "phone", "args": {"kind": "alarm", "hour": 6, "minute": 30, "reason": "early flight"}},
+        {"tool": "phone", "args": {"kind": "teleport"}},
+        {"answer": "The 6:30 alarm is waiting on your phone: tap Do it."},
+    ])
+    res = await agent.ask("wake me at 6:30", llm=script)
+    assert hub[0] == {"phone": {"kind": "alarm", "hour": 6, "minute": 30, "reason": "early flight"}}
+    assert "WAITING on his phone: Set an alarm for 06:30" in script.seen[1][-1]["content"]
+    assert "not a phone action" in script.seen[2][-1]["content"]
+    assert res["pending"] == [{"device": "phone", "action": "phone.alarm", "status": "pending"}]
