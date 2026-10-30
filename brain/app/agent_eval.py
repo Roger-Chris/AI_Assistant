@@ -302,7 +302,9 @@ async def run_case(case: Case, llm: LLM, reset: bool = True) -> dict:
     try:
         res = await agent.ask(case.request, source="eval", llm=llm, history=case.history)
     except Exception as e:  # noqa: BLE001
-        return {"case": case.name, "ok": False, "errors": [f"crashed: {e}"], "seconds": round(time.monotonic() - started, 1)}
+        # the type too: an httpx timeout's message is empty, which left the report saying only "crashed: "
+        return {"case": case.name, "ok": False, "errors": [f"crashed: {type(e).__name__}: {e}"],
+                "seconds": round(time.monotonic() - started, 1)}
     errors = judge(case, res, hub)
     return {"case": case.name, "ok": not errors, "errors": errors, "answer": res["answer"],
             "steps": [{"tool": s["tool"], "args": s["args"]} for s in res["steps"]],
