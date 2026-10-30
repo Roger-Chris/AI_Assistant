@@ -106,6 +106,10 @@ class Settings(BaseSettings):
     # the thinking loop (agent.py): POST /agent/ask, from the app through the hub
     agent_enabled: bool = True
     agent_max_steps: int = 8       # tool calls per request
+    # Spoken requests think with a fast model: "classifier" (CLASSIFIER_* keys, e.g. Gemini Flash-Lite, ~1 s a
+    # step) with the planner as its fallback, "planner" for the planner (through the hub each step runs a
+    # whole Codex/Claude session, 10-25 s), or a model name on the planner's endpoint.
+    agent_voice_model: str = "classifier"
     agent_max_tokens: int = 2000   # per model turn; gemini-3.x spends part of it thinking
     # what each device name is, in your words, so "the laptop" finds the right one, e.g.
     # "roger = the HP Omen laptop (Windows, RTX 5050); linux-hub = the always-on Linux machine; mac-mini = the Mac mini"

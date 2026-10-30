@@ -28,8 +28,8 @@ from sqlmodel import Session, select
 
 from . import graph, learn, memory
 from .config import settings
-from .db import Task, TaskKind, TaskStatus, engine
-from .llm import _FENCE, LLM, extract_json, planner_profile
+from .db import Message, Task, TaskKind, TaskStatus, engine
+from .llm import _FENCE, LLM, extract_json, planner_profile, voice_profile
 
 log = logging.getLogger("brain.agent")
 
@@ -196,15 +196,28 @@ def _open_tasks(session: Session) -> str:
     rows = session.exec(select(Task).where(Task.status.in_([TaskStatus.open, TaskStatus.pending_confirmation]))  # type: ignore[attr-defined]
                         .order_by(Task.due_at.is_(None), Task.due_at).limit(30)).all()  # type: ignore[attr-defined]
     tz = ZoneInfo(settings.tz)
-
-    def due(t: Task) -> str:
+    today = datetime.now(tz).date()
+    groups: dict[str, list[str]] = {"OVERDUE": [], "TODAY": [], "LATER": [], "NO DATE": []}
+    for t in rows:
+        # unconfirmed = found in a message or mail by itself; he never said it is a task
+        src = session.get(Message, t.source_message_id) if t.source_message_id else None
+        found = (src.chat_name or src.chat_id) if src else "a message"
+        state = f"unconfirmed: found in {found}" if t.status == TaskStatus.pending_confirmation else "open"
+        line = f"#{t.id} {t.title} ({state}{', ' + t.priority if t.priority != 'normal' else ''}"
         if not t.due_at:
-            return "no date"
-        d = t.due_at if t.due_at.tzinfo else t.due_at.replace(tzinfo=timezone.utc)
-        return d.astimezone(tz).strftime("%a %d %b %H:%M")
-
-    return "\n".join(f"#{t.id} {t.title} (due {due(t)}, {'unconfirmed' if t.status == TaskStatus.pending_confirmation else 'open'}"
-                     f"{', ' + t.priority if t.priority != 'normal' else ''})" for t in rows) or "No open tasks."
+            groups["NO DATE"].append(line + ")")
+            continue
+        d = (t.due_at if t.due_at.tzinfo else t.due_at.replace(tzinfo=timezone.utc)).astimezone(tz)
+        days = (today - d.date()).days
+        if days > 0:
+            groups["OVERDUE"].append(f"{line}, was due {d.strftime('%a %d %b')}, {days} day{'s' if days != 1 else ''} ago)")
+        elif days == 0:
+            groups["TODAY"].append(f"{line}, due {d.strftime('%H:%M')})")
+        else:
+            groups["LATER"].append(f"{line}, due {d.strftime('%a %d %b %H:%M')})")
+    # Grouped by his local date: reading bare dates, a model called a task due in September "today's".
+    out = [f"{name} ({len(lines)}):\n" + "\n".join(lines) for name, lines in groups.items() if lines]
+    return (f"Today is {today.strftime('%a %d %b')}.\n" + "\n".join(out)) if out else "No open tasks."
 
 
 async def run_tool(name: str, args: dict, hub: Hub, used: list[dict]) -> str:
@@ -324,7 +337,7 @@ VOICE_NOTE = ("\n\nThis request was spoken and your answer will be read aloud. K
 async def ask(text: str, *, source: str = "app", llm: Optional[LLM] = None,
               on_step: Optional[Callable[[str], None]] = None, history: Optional[list[dict]] = None) -> dict:
     hub = Hub()
-    model = llm or LLM(planner_profile(), timeout=120)
+    model = llm or LLM(voice_profile() if source == "voice" else planner_profile(), timeout=120)
     with Session(engine) as session:
         owner = graph.owner(session)
         profile = (owner.summary if owner and owner.summary else f"{settings.owner_name}.")

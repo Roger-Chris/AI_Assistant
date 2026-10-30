@@ -207,6 +207,45 @@ async def test_spoken_requests_get_short_spoken_answers(hub):
     assert "read aloud" not in script.seen[1][0]["content"]
 
 
+def test_tasks_are_grouped_by_his_date_and_old_unconfirmed_ones_are_not_today():
+    # "what's on my plate today" once answered with an unconfirmed task due five weeks earlier
+    from datetime import datetime, timedelta, timezone
+
+    from app.db import Message, TaskStatus
+    now = datetime.now(timezone.utc)
+    with Session(engine) as s:
+        m = Message(source="whatsapp", external_id="zzagent-sh", chat_id="me@s.whatsapp.net", chat_name="Me (notes to self)",
+                    sender_id="me", text="send me all the files related to SH today", sent_at=now - timedelta(days=42))
+        s.add(m)
+        s.commit()
+        s.add(Task(title="zzagent Send all SH files", status=TaskStatus.pending_confirmation, priority="high",
+                   due_at=now - timedelta(days=42), source_message_id=m.id))
+        s.add(Task(title="zzagent Renew passport", status=TaskStatus.open, due_at=now + timedelta(days=30)))
+        s.commit()
+        out = agent._open_tasks(s)
+        for t in s.exec(select(Task).where(Task.title.startswith("zzagent"))).all():  # type: ignore[union-attr]
+            s.delete(t)
+        s.commit()
+        s.delete(s.get(Message, m.id))
+        s.commit()
+    overdue = out.split("OVERDUE", 1)[1].split("\nTODAY", 1)[0].split("\nLATER", 1)[0]
+    assert "zzagent Send all SH files (unconfirmed: found in Me (notes to self), high, was due" in overdue
+    assert "42 days ago" in overdue
+    assert "zzagent Renew passport" in out.split("LATER", 1)[1]
+
+
+def test_spoken_requests_think_with_the_fast_model_and_fall_back_to_the_planner(monkeypatch):
+    from app import llm
+    monkeypatch.setattr(settings, "classifier_api_keys", "fast-key")
+    monkeypatch.setattr(settings, "classifier_model", "gemini-3.5-flash-lite")
+    monkeypatch.setattr(settings, "agent_voice_model", "classifier")
+    p = llm.voice_profile()
+    assert p.model == "gemini-3.5-flash-lite" and p.fallback is not None
+    assert p.fallback.model == llm.planner_profile().model
+    monkeypatch.setattr(settings, "agent_voice_model", "planner")
+    assert llm.voice_profile().model == llm.planner_profile().model
+
+
 async def test_build_starts_on_the_hub_and_is_reported_as_started(hub):
     script = Script([
         {"tool": "build", "args": {"name": "Expense Tracker", "spec": "a web page to log expenses", "repo": "/srv/expenses"}},

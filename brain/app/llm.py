@@ -128,6 +128,23 @@ def classifier_profile() -> Profile:
                           settings.classifier_fallback_model)
 
 
+def voice_profile() -> Profile:
+    """For spoken requests (AGENT_VOICE_MODEL): fast first, the planner as the fallback."""
+    choice = settings.agent_voice_model.strip()
+    if choice in ("", "planner"):
+        return planner_profile()
+    if choice == "classifier":
+        keys = _split(settings.classifier_api_keys) or _split(settings.classifier_api_key)
+        if not keys:  # no key of its own: nothing faster to use
+            return planner_profile()
+        p = _profile("voice", settings.classifier_base_url, keys, settings.classifier_model)
+    else:
+        keys = _split(settings.planner_api_keys) or _split(settings.planner_api_key)
+        p = _profile("voice", settings.planner_base_url, keys, choice)
+    p.fallback = planner_profile()
+    return p
+
+
 def planner_profile() -> Profile:
     keys = _split(settings.planner_api_keys) or _split(settings.planner_api_key)
     p = _profile("planner", settings.planner_base_url, keys, settings.planner_model)
