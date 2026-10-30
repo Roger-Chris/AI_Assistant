@@ -55,6 +55,7 @@ TOOLS — reply with exactly ONE JSON object per turn, nothing else:
 {{"tool": "tasks", "args": {{}}}}   (his open tasks)
 {{"tool": "add_task", "args": {{"title": "...", "due_at": "optional ISO 8601 local time", "details": "optional"}}}}
 {{"tool": "act", "args": {{"device": "name", "action": "files.find", "args": {{...}}, "reason": "one line why"}}}}
+{{"tool": "build", "args": {{"name": "the app's name", "spec": "what to build or change", "repo": "git folder on the hub's machine (not needed when continuing)", "continue": false, "agent": "optional: claude|codex", "device": "optional device name"}}}}
 {{"answer": "your reply to him"}}
 
 RULES
@@ -64,6 +65,7 @@ RULES
 - Something is done only when its RESULT says OK. PENDING means waiting for his Approve on the phone: say exactly that. REFUSED or FAILED: say so plainly.
 - There is no delete action, and you cannot send messages (WhatsApp, email, SMS) to anyone: say so, and offer what you can (a draft, a list of what to delete).
 - Never handle passwords.
+- `build` makes or changes an app on its own git branch (coding agent, tests, a second model's review); it never touches main. "Continue the X app" = `build` with "continue": true. It takes a while: say it has STARTED and that he gets a notice with a preview to check and Merge on the phone. You cannot merge.
 - `add_task` due_at is his LOCAL time, e.g. 2026-11-02T17:00 for 5 pm. Work dates out from "Now" above.
 - When he tells you something worth keeping (a preference, a decision, a fact, a date), save it with `remember`.
 - Answers: short, direct, plain text, in his words. At most {steps} tool calls, then answer with what you have."""
@@ -71,7 +73,7 @@ RULES
 
 # ---------------------------------------------------------------- reading the model's move
 
-TOOLS = ("memory_search", "memory_about", "remember", "tasks", "add_task", "act")
+TOOLS = ("memory_search", "memory_about", "remember", "tasks", "add_task", "act", "build")
 # Names models reach for instead of ours. Mapped silently; anything else gets the list back.
 ALIASES = {
     "search_memory": "memory_search", "memory.search": "memory_search", "search": "memory_search",
@@ -260,6 +262,24 @@ async def run_tool(name: str, args: dict, hub: Hub, used: list[dict]) -> str:
             return (f"PENDING: waiting for {settings.owner_name}'s approval on the phone ({a.get('summary')}). "
                     "It has NOT run yet.")
         return f"REFUSED: {res.get('error', 'unknown reason')}"
+    if name == "build":
+        body = {k: v for k, v in {
+            "name": str(args.get("name") or "").strip(), "spec": str(args.get("spec") or "").strip(),
+            "repo": args.get("repo") or None, "node": args.get("device") or None,
+            "agent": args.get("agent") or None, "continue": bool(args.get("continue")),
+        }.items() if v is not None}
+        if not body["name"] or not body["spec"]:
+            return "A build needs the app's name and what to build (spec)."
+        try:
+            b = await hub.post("/api/builds", body, timeout=30)
+        except httpx.HTTPStatusError as e:
+            detail = e.response.json().get("error", "") if e.response.headers.get("content-type", "").startswith("application/json") else ""
+            return f"The hub would not start it: {detail or e}"
+        except Exception as e:  # noqa: BLE001
+            return f"The hub could not start the build: {e}"
+        used.append({"device": b.get("node") or "any", "action": "build", "status": "started"})
+        return (f"STARTED build {b.get('id')} of {b.get('name')} in {b.get('repo')} ({b.get('agent')} codes, "
+                f"{b.get('reviewer')} reviews). It is NOT finished: he gets a notice to check the preview and Merge.")
     return f"Unknown tool {name!r}. Use one of: {', '.join(TOOLS)}, or answer with {{\"answer\": ...}}."
 
 

@@ -169,7 +169,7 @@ Old TELEGRAM_* lines in a `.env` are ignored. Don't add another chat-app transpo
 Recall (memory search for the request, into the prompt) → up to `AGENT_MAX_STEPS` JSON moves on
 the planner model, each a tool call or `{"answer"}` → a `work` record of what was asked and done.
 
-- Tools: `memory_search`, `memory_about`, `remember`, `tasks`, `add_task`, `act` (the hub's
+- Tools: `memory_search`, `memory_about`, `remember`, `tasks`, `add_task`, `act`, `build` (hub `POST /api/builds`: an app made or continued on its own branch; reported as STARTED, the owner checks the preview and merges in the app) (the hub's
   `/api/act`, so any device's actions). There is deliberately no tool that approves anything:
   risky actions come back `pending` and the loop must say they have NOT run.
 - JSON moves, not provider tool-calling: works on every OpenAI-compatible model with the same key

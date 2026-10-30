@@ -59,6 +59,13 @@ def hub(monkeypatch):
                                                  "result": {"ok": True, "output": "D:/evtol/zzthrust_test.csv"}})
             return httpx.Response(200, json={"status": "pending", "node": body["node"], "action": body["action"],
                                              "approval": {"id": "a1", "summary": "Write 5 characters to plan.md"}})
+        if req.url.path == "/api/builds":
+            body = json.loads(req.content)
+            calls.append({"build": body})
+            if body.get("continue") and body["name"] == "nothing":
+                return httpx.Response(404, json={"error": "no earlier build of nothing to continue"})
+            return httpx.Response(200, json={"id": "b1", "name": body["name"], "repo": body.get("repo", "/srv/app"),
+                                             "agent": "claude", "reviewer": "codex", "status": "running"})
         return httpx.Response(404)
 
     monkeypatch.setattr(settings, "hub_url", "http://hub.test")
@@ -192,3 +199,19 @@ async def test_spoken_requests_get_short_spoken_answers(hub):
     assert "read aloud" in script.seen[0][0]["content"] and "speech recognition" in script.seen[0][0]["content"]
     await agent.ask("whats on today", llm=script, source="app")
     assert "read aloud" not in script.seen[1][0]["content"]
+
+
+async def test_build_starts_on_the_hub_and_is_reported_as_started(hub):
+    script = Script([
+        {"tool": "build", "args": {"name": "Expense Tracker", "spec": "a web page to log expenses", "repo": "/srv/expenses"}},
+        {"tool": "build", "args": {"name": "nothing", "spec": "more", "continue": True}},
+        {"tool": "build", "args": {"name": "x"}},
+        {"answer": "Started the expense tracker build; you'll get a preview to check."},
+    ])
+    res = await agent.ask("build me an expense tracker in /srv/expenses", llm=script)
+    assert hub[0] == {"build": {"name": "Expense Tracker", "spec": "a web page to log expenses", "repo": "/srv/expenses", "continue": False}}
+    assert "STARTED build b1" in script.seen[1][-1]["content"] and "NOT finished" in script.seen[1][-1]["content"]
+    assert "no earlier build of nothing" in script.seen[2][-1]["content"]
+    assert "needs the app's name and what to build" in script.seen[3][-1]["content"]
+    assert res["pending"] == []  # a started build is not waiting on an approval
+    assert [st["tool"] for st in res["steps"]][:1] == ["build"]
