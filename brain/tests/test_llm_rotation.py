@@ -149,3 +149,20 @@ async def test_thinks_with_chatgpt_through_the_hub_and_falls_back_to_gemini(monk
     hub_up["ok"] = False
     assert await LLM(p).complete([{"role": "user", "content": "hi"}]) == "from gemini-3.8-flash"
     assert seen[-1] == ("generativelanguage.googleapis.com", "gemini-3.8-flash", "g1")
+
+
+def test_hub_auto_is_routed_by_the_hub(monkeypatch):
+    # PLANNER_MODEL=auto through the hub is a plain routed call (raw:auto), never a full Orchestrator run
+    s = llm_mod.settings
+    monkeypatch.setattr(s, "hub_url", "http://127.0.0.1:4317")
+    monkeypatch.setattr(s, "orc_token", "")
+    monkeypatch.setattr(s, "planner_base_url", "hub")
+    monkeypatch.setattr(s, "planner_model", "auto")
+    monkeypatch.setattr(s, "planner_api_key", "")
+    monkeypatch.setattr(s, "planner_api_keys", "")
+    monkeypatch.setattr(s, "planner_fallback_base_url", "")
+    p = llm_mod.planner_profile()
+    assert p.model == "raw:auto" and p.base_url == "http://127.0.0.1:4317/v1"
+    monkeypatch.setattr(s, "planner_model", "gemini-3.8-flash")
+    monkeypatch.setattr(s, "planner_base_url", "https://example.test/v1")
+    assert llm_mod.planner_profile().model == "gemini-3.8-flash"  # not through the hub: untouched

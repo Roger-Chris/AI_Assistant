@@ -96,7 +96,8 @@ def _split(keys: str) -> list[str]:
 
 # The Orchestrator hub serves your logged-in AI sessions as an OpenAI-style endpoint
 # (/v1/chat/completions, model = raw:codex | raw:claude | raw:gemini | raw:groq): BASE_URL=hub uses it, so the
-# brain thinks with your ChatGPT (or Claude) subscription instead of an API key.
+# brain thinks with your ChatGPT (or Claude) subscription instead of an API key. MODEL=auto sends raw:auto:
+# the hub's model router picks the session and falls back through the others when one is limited.
 HUB_MODELS = {"codex", "claude", "gemini", "groq", "auto"}
 
 
@@ -108,7 +109,7 @@ def _profile(name: str, base_url: str, keys: list[str], model: str) -> Profile:
         # the hub trusts loopback calls; from another machine it needs its token
         keys = keys or [settings.orc_token or "loopback"]
         # raw: one plain call to that session, not an Orchestrator run (no plan, no phone alert)
-        if model in HUB_MODELS - {"auto"}:
+        if model in HUB_MODELS:
             model = f"raw:{model}"
     return Profile(name, base_url, keys, model, min_timeout=240.0 if via_hub else 0.0)
 
