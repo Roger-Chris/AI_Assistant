@@ -69,7 +69,7 @@ approval rules of the program you run in; never say a tool here is unavailable, 
 {{"tool": "phone", "args": {{"kind": "alarm|reminder|open_app|call|sms|file", "...": "alarm: hour, minute, label; reminder: at (ISO local), text; open_app: app, package?; call: number, name?; sms: number, text, name?; file: path on the hub", "reason": "one line why"}}}}
 {{"tool": "build", "args": {{"name": "a short name", "spec": "what to make or change", "kind": "app|slides|video", "continue": false, "agent": "optional: claude|codex", "device": "optional device name"}}}}
 {{"tool": "mail", "args": {{"to": "an email address, or a name if you have no address", "about": "what the mail should say, in his words", "subject": "optional", "name": "optional: who it is for"}}}}
-{{"tool": "shop", "args": {{"store": "amazon|flipkart|instamart|swiggy|zomato|blinkit|zepto", "request": "what to find, with quantity"}}}}
+{{"tool": "shop", "args": {{"request": "what to find, with quantity", "store": "optional, only if he names one: amazon|flipkart|robu|robocraze|quartz|instamart|swiggy|zomato|blinkit|zepto"}}}}
 {{"answer": "your reply to him"}}
 
 RULES
@@ -79,7 +79,7 @@ RULES
 - Something is done only when its RESULT says OK. PENDING means waiting for his Approve on the phone: say exactly that. REFUSED or FAILED: say so plainly.
 - There is no delete action, and you cannot send messages (WhatsApp, email, SMS) to anyone: say so, and offer what you can (a draft, a list of what to delete).
 - "Write or send a mail": use `mail`, looking up the address in memory first. It only writes a draft; he checks it and taps Send on the phone. Never say a mail was sent.
-- "Add to my cart" or "order X": use `shop` and ask which store if he named none. It fills a cart and tells his phone the items and total. You cannot place an order or pay: he does that himself in the store, after tapping Go to checkout. Never say something was ordered.
+- "Find X", "add to my cart" or "order X": use `shop`, with a store only if he named one; without one it searches his stores, adds to the cart at the best one, and tells his phone which store has it, the items and the total. You cannot place an order or pay: he does that himself in the store, after tapping Go to checkout. Never say something was ordered.
 - Never handle passwords, card numbers, CVVs, UPI ids or OTPs: if he offers one, tell him not to share it and to enter it in the store himself.
 - "Open X": on a computer use `act` with apps.open and the program's name; it runs at once. On his phone use `phone` with kind open_app (add `package` if you know it). If he names no device, use the one he is talking from: the phone for a spoken request or the Assistant tab. Other `phone` kinds happen only when he taps Do it. A call or text only opens the dialer or the message filled in; he presses call or send.
 - "Create a presentation, a video or an app" = `build` with the right kind and no repo: it chooses the best model and device, makes a private git repo, builds on a branch and runs the audits in his build guidelines. "Continue the X app" = `build` with "continue": true. It takes a while: say it has STARTED and that he gets a notice to check it. You cannot merge. You may only work in projects you created; his own repos need him to start the build from the Builds screen.
@@ -365,7 +365,7 @@ async def run_tool(name: str, args: dict, hub: Hub, used: list[dict]) -> str:
         missing = "" if m.get("to") else " It has no address yet: he fills that in."
         return f"DRAFTED, NOT SENT: \"{m.get('subject')}\". It waits on his phone for him to check it and tap Send.{missing}"
     if name == "shop":
-        body = {"store": args.get("store"), "request": args.get("request"), "by": "brain"}
+        body = {k: v for k, v in {"store": args.get("store"), "request": args.get("request"), "by": "brain"}.items() if v}
         try:
             s = await hub.post("/api/shop", body, timeout=30)
         except httpx.HTTPStatusError as e:

@@ -96,10 +96,10 @@ def hub(monkeypatch):
         if req.url.path == "/api/shop":
             body = json.loads(req.content)
             calls.append({"shop": body})
-            if body["store"] == "ebay":
+            if body.get("store") == "ebay":
                 return httpx.Response(400, json={"error": "I don't shop on ebay yet."})
-            status = "link" if body["store"] == "amazon" else "working"
-            return httpx.Response(200, json={"id": "s1", "storeName": body["store"], "node": "omen", "status": status})
+            status = "link" if body.get("store") == "amazon" else "working"
+            return httpx.Response(200, json={"id": "s1", "storeName": body.get("store", "5 stores"), "node": "omen", "status": status})
         if req.url.path == "/api/builds":
             body = json.loads(req.content)
             calls.append({"build": body})
@@ -315,9 +315,11 @@ async def test_shop_starts_and_never_claims_an_order(hub):
         {"tool": "shop", "args": {"store": "flipkart", "request": "a pen"}},
         {"tool": "shop", "args": {"store": "amazon", "request": "a pen"}},
         {"tool": "shop", "args": {"store": "ebay", "request": "a pen"}},
+        {"tool": "shop", "args": {"request": "an esp32"}},
         {"answer": "Started; check your phone."},
     ])
     await agent.ask("add a pen to my cart", llm=script)
+    assert hub[3] == {"shop": {"request": "an esp32", "by": "brain"}}
     assert hub[0] == {"shop": {"store": "flipkart", "request": "a pen", "by": "brain"}}
     assert "NOT filled yet and nothing is ordered" in script.seen[1][-1]["content"]
     assert "LINK ONLY" in script.seen[2][-1]["content"]
