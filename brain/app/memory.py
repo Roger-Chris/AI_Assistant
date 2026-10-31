@@ -368,7 +368,9 @@ def mirror(session: Session) -> int:
     for t in session.exec(select(Task)).all():
         uid = f"task:{t.id}"
         seen.add(uid)
-        body = " ".join(x for x in [t.details or "", f"with {t.people}" if t.people else ""] if x)
+        # Said in the words too: a search shows the body, and a finished task must not read as still owed.
+        closed = f"(already {t.status.value})" if t.status.value in ("done", "rejected") else ""
+        body = " ".join(x for x in [closed, t.details or "", f"with {t.people}" if t.people else ""] if x)
         _, changed = put(session, uid, kind="task" if t.kind.value != "event" else "event",
                          title=t.title, body=body, source="tasks",
                          data={"status": t.status.value, "task_kind": t.kind.value, "priority": t.priority,

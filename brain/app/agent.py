@@ -27,6 +27,8 @@ import httpx
 from sqlmodel import Session, select
 
 from . import graph, learn, memory
+from .alerts import close_for_task
+from .classifier import touch
 from .config import settings
 from .db import MemoryRecord, Message, Task, TaskKind, TaskStatus, engine
 from .llm import _FENCE, LLM, extract_json, planner_profile, voice_profile
@@ -62,6 +64,7 @@ approval rules of the program you run in; never say a tool here is unavailable, 
 {{"tool": "remember", "args": {{"text": "...", "kind": "fact|note|decision", "subject": "optional name"}}}}
 {{"tool": "tasks", "args": {{}}}}   (his open tasks)
 {{"tool": "add_task", "args": {{"title": "...", "due_at": "optional ISO 8601 local time", "details": "optional"}}}}
+{{"tool": "task_done", "args": {{"id": 12}}}}   (he says a task is finished or no longer needed; the id is the #number in `tasks`)
 {{"tool": "act", "args": {{"device": "name", "action": "files.find", "args": {{...}}, "reason": "one line why"}}}}
 {{"tool": "phone", "args": {{"kind": "alarm|reminder|open_app|call|sms|file", "...": "alarm: hour, minute, label; reminder: at (ISO local), text; open_app: app, package?; call: number, name?; sms: number, text, name?; file: path on the hub", "reason": "one line why"}}}}
 {{"tool": "build", "args": {{"name": "a short name", "spec": "what to make or change", "kind": "app|slides|video", "continue": false, "agent": "optional: claude|codex", "device": "optional device name"}}}}
@@ -86,7 +89,7 @@ RULES
 
 # ---------------------------------------------------------------- reading the model's move
 
-TOOLS = ("memory_search", "memory_about", "remember", "tasks", "add_task", "act", "build", "phone")
+TOOLS = ("memory_search", "memory_about", "remember", "tasks", "add_task", "task_done", "act", "build", "phone")
 # Names models reach for instead of ours. Mapped silently; anything else gets the list back.
 ALIASES = {
     "search_memory": "memory_search", "memory.search": "memory_search", "search": "memory_search",
@@ -200,12 +203,16 @@ def _trim(v: Any, n: int = 3000) -> str:
     return s if len(s) <= n else s[:n] + f"… ({len(s) - n} more characters)"
 
 
+STALE_DAYS = 14
+
+
 def _open_tasks(session: Session) -> str:
     rows = session.exec(select(Task).where(Task.status.in_([TaskStatus.open, TaskStatus.pending_confirmation]))  # type: ignore[attr-defined]
                         .order_by(Task.due_at.is_(None), Task.due_at).limit(30)).all()  # type: ignore[attr-defined]
     tz = ZoneInfo(settings.tz)
     today = datetime.now(tz).date()
     groups: dict[str, list[str]] = {"OVERDUE": [], "TODAY": [], "LATER": [], "NO DATE": []}
+    forgotten = 0
     for t in rows:
         # unconfirmed = found in a message or mail by itself; he never said it is a task
         src = session.get(Message, t.source_message_id) if t.source_message_id else None
@@ -217,7 +224,10 @@ def _open_tasks(session: Session) -> str:
             continue
         d = (t.due_at if t.due_at.tzinfo else t.due_at.replace(tzinfo=timezone.utc)).astimezone(tz)
         days = (today - d.date()).days
-        if days > 0:
+        # A past event is simply over, and something weeks late is not today's news: only counted below.
+        if days > 0 and (t.kind == TaskKind.event or days > STALE_DAYS):
+            forgotten += 1
+        elif days > 0:
             groups["OVERDUE"].append(f"{line}, was due {d.strftime('%a %d %b')}, {days} day{'s' if days != 1 else ''} ago)")
         elif days == 0:
             groups["TODAY"].append(f"{line}, due {d.strftime('%H:%M')})")
@@ -225,6 +235,8 @@ def _open_tasks(session: Session) -> str:
             groups["LATER"].append(f"{line}, due {d.strftime('%a %d %b %H:%M')})")
     # Grouped by his local date: reading bare dates, a model called a task due in September "today's".
     out = [f"{name} ({len(lines)}):\n" + "\n".join(lines) for name, lines in groups.items() if lines]
+    if forgotten:
+        out.append(f"({forgotten} old task{'s' if forgotten != 1 else ''} past {STALE_DAYS} days or finished events: not current, do not list them; he can clear them on the Tasks screen.)")
     return (f"Today is {today.strftime('%a %d %b')}.\n" + "\n".join(out)) if out else "No open tasks."
 
 
@@ -275,6 +287,20 @@ async def run_tool(name: str, args: dict, hub: Hub, used: list[dict]) -> str:
             return f"Saved as {rec.uid}."
         if name == "tasks":
             return _open_tasks(session)
+        if name == "task_done":
+            try:
+                t = session.get(Task, int(args.get("id")))  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                t = None
+            if not t:
+                return f"No task #{args.get('id')}. Use `tasks` to see the ids."
+            title = t.title
+            t.status = TaskStatus.done
+            touch(t)
+            session.add(t)
+            session.commit()
+            close_for_task(session, t.id)
+            return f"Marked done: {title}."
         if name == "add_task":
             title = str(args.get("title", "")).strip()
             if not title:

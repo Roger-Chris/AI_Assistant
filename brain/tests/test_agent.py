@@ -1,7 +1,9 @@
 """The thinking loop: scripted model moves, a fake hub, real memory and tasks."""
 from __future__ import annotations
 
+import asyncio
 import json
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
@@ -10,7 +12,7 @@ from sqlmodel import Session, select
 
 from app import agent, memory
 from app.config import settings
-from app.db import MemoryRecord, Task, engine
+from app.db import MemoryRecord, Task, TaskKind, TaskStatus, engine
 
 
 @pytest.fixture(autouse=True)
@@ -26,6 +28,28 @@ def _clean():
             s.execute(text("DELETE FROM memory_fts WHERE uid = :u"), {"u": r.uid})
             s.delete(r)
         s.commit()
+
+
+def test_task_done_finishes_a_task_and_old_ones_stop_reading_as_current():
+    now = datetime.now(timezone.utc)
+    with Session(engine) as s:
+        old = Task(kind=TaskKind.task, status=TaskStatus.open, title="zzagent call varun", due_at=now - timedelta(days=40), confidence=1.0)
+        over = Task(kind=TaskKind.event, status=TaskStatus.open, title="zzagent past event", due_at=now - timedelta(days=2), confidence=1.0)
+        late = Task(kind=TaskKind.task, status=TaskStatus.open, title="zzagent still owed", due_at=now - timedelta(days=2), confidence=1.0)
+        s.add_all([old, over, late])
+        s.commit()
+        old_id = old.id
+        text_now = agent._open_tasks(s)
+    assert "zzagent still owed" in text_now
+    assert "zzagent call varun" not in text_now and "zzagent past event" not in text_now
+    assert "do not list them" in text_now
+
+    assert "Marked done: zzagent call varun" in asyncio.run(agent.run_tool("task_done", {"id": old_id}, agent.Hub(), []))
+    with Session(engine) as s:
+        assert s.get(Task, old_id).status == TaskStatus.done
+        memory.mirror(s)
+        assert "(already done)" in memory.get(s, f"task:{old_id}")["body"]
+    assert "No task" in asyncio.run(agent.run_tool("task_done", {"id": "nonsense"}, agent.Hub(), []))
 
 
 class Script:
@@ -215,11 +239,11 @@ def test_tasks_are_grouped_by_his_date_and_old_unconfirmed_ones_are_not_today():
     now = datetime.now(timezone.utc)
     with Session(engine) as s:
         m = Message(source="whatsapp", external_id="zzagent-sh", chat_id="me@s.whatsapp.net", chat_name="Me (notes to self)",
-                    sender_id="me", text="send me all the files related to SH today", sent_at=now - timedelta(days=42))
+                    sender_id="me", text="send me all the files related to SH today", sent_at=now - timedelta(days=10))
         s.add(m)
         s.commit()
         s.add(Task(title="zzagent Send all SH files", status=TaskStatus.pending_confirmation, priority="high",
-                   due_at=now - timedelta(days=42), source_message_id=m.id))
+                   due_at=now - timedelta(days=10), source_message_id=m.id))
         s.add(Task(title="zzagent Renew passport", status=TaskStatus.open, due_at=now + timedelta(days=30)))
         s.commit()
         out = agent._open_tasks(s)
@@ -230,7 +254,7 @@ def test_tasks_are_grouped_by_his_date_and_old_unconfirmed_ones_are_not_today():
         s.commit()
     overdue = out.split("OVERDUE", 1)[1].split("\nTODAY", 1)[0].split("\nLATER", 1)[0]
     assert "zzagent Send all SH files (unconfirmed: found in Me (notes to self), high, was due" in overdue
-    assert "42 days ago" in overdue
+    assert "10 days ago" in overdue
     assert "zzagent Renew passport" in out.split("LATER", 1)[1]
 
 
