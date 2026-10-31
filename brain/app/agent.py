@@ -376,7 +376,7 @@ async def run_tool(name: str, args: dict, hub: Hub, used: list[dict]) -> str:
         used.append({"device": s.get("node") or "hub", "action": "shop", "status": s.get("status")})
         if s.get("status") == "link":
             return f"LINK ONLY: {s.get('storeName')} is not driven by the agent. A search link waits on his phone; nothing is in a cart."
-        return (f"STARTED on {s.get('storeName')}. The cart is NOT filled yet and nothing is ordered: "
+        return (f"STARTED (run {s.get('id')}) on {s.get('storeName')}. The cart is NOT filled yet and nothing is ordered: "
                 "his phone gets the items and total in a few minutes, and he orders in the store himself.")
     if name == "build":
         body = {k: v for k, v in {
