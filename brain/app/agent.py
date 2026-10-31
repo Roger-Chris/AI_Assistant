@@ -395,8 +395,9 @@ async def run_tool(name: str, args: dict, hub: Hub, used: list[dict]) -> str:
         except Exception as e:  # noqa: BLE001
             return f"The hub could not start the build: {e}"
         used.append({"device": b.get("node") or "any", "action": "build", "status": "started"})
+        first = "No code is written until he confirms the design: he gets a notice when it is ready. " if b.get("confirmDesign") else ""
         return (f"STARTED build {b.get('id')} of {b.get('name')} in {b.get('repo') or 'a cloud agent'} ({b.get('agent')} makes it, "
-                f"{b.get('reviewer')} reviews). It is NOT finished: he gets a notice to check it.")
+                f"{b.get('reviewer')} reviews). {first}It is NOT finished: he gets a notice to check it.")
     return f"Unknown tool {name!r}. Use one of: {', '.join(TOOLS)}, or answer with {{\"answer\": ...}}."
 
 
