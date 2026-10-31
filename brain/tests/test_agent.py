@@ -98,7 +98,7 @@ async def test_recall_tools_and_answer_are_remembered(hub):
     assert "omen: online" in system and "files.write [ask]" in system
     assert "X8 coaxial" in script.seen[1][-1]["content"]  # memory_about result shown to the model
     assert "zzthrust_test.csv" in script.seen[2][-1]["content"]
-    assert hub == [{"node": "omen", "action": "files.find", "args": {"name": "zzthrust"}, "reason": "find the sheet"}]
+    assert hub == [{"node": "omen", "action": "files.find", "args": {"name": "zzthrust"}, "reason": "find the sheet", "who": "brain"}]
     with Session(engine) as s:
         work = s.exec(select(MemoryRecord).where(MemoryRecord.title.contains("zzagent eVTOL thrust"))).first()  # type: ignore[union-attr]
         assert work and work.kind == "work" and "files.find" in work.body
@@ -179,7 +179,7 @@ async def test_messy_replies_are_understood(hub):
     ])
     res = await agent.ask("zzmessy", llm=script)
     assert [s["tool"] for s in res["steps"]] == ["memory_search", "act"]
-    assert hub[-1] == {"node": "omen", "action": "files.find", "args": {"name": "zzthrust"}, "reason": None}
+    assert hub[-1] == {"node": "omen", "action": "files.find", "args": {"name": "zzthrust"}, "reason": None, "who": "brain"}
     assert res["answer"] == "Found it."
 
 
@@ -254,7 +254,7 @@ async def test_build_starts_on_the_hub_and_is_reported_as_started(hub):
         {"answer": "Started the expense tracker build; you'll get a preview to check."},
     ])
     res = await agent.ask("build me an expense tracker in /srv/expenses", llm=script)
-    assert hub[0] == {"build": {"name": "Expense Tracker", "spec": "a web page to log expenses", "repo": "/srv/expenses", "continue": False}}
+    assert hub[0] == {"build": {"name": "Expense Tracker", "spec": "a web page to log expenses", "repo": "/srv/expenses", "continue": False, "by": "brain"}}
     assert "STARTED build b1" in script.seen[1][-1]["content"] and "NOT finished" in script.seen[1][-1]["content"]
     assert "no earlier build of nothing" in script.seen[2][-1]["content"]
     assert "needs the app's name and what to build" in script.seen[3][-1]["content"]

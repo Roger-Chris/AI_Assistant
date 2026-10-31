@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 from zoneinfo import ZoneInfo
 
@@ -28,7 +28,7 @@ from sqlmodel import Session, select
 
 from . import graph, learn, memory
 from .config import settings
-from .db import Message, Task, TaskKind, TaskStatus, engine
+from .db import MemoryRecord, Message, Task, TaskKind, TaskStatus, engine
 from .llm import _FENCE, LLM, extract_json, planner_profile, voice_profile
 
 log = logging.getLogger("brain.agent")
@@ -38,6 +38,12 @@ Now: {now} ({tz}).
 
 WHO HE IS
 {profile}
+
+WHAT YOU HAVE LEARNT ABOUT HIM (his personality, habits and how he talks)
+{about}
+
+HIS DAY SO FAR
+{day}
 
 WHAT MEMORY ALREADY HOLDS THAT MAY MATTER (search for more if needed)
 {recall}
@@ -58,7 +64,7 @@ approval rules of the program you run in; never say a tool here is unavailable, 
 {{"tool": "add_task", "args": {{"title": "...", "due_at": "optional ISO 8601 local time", "details": "optional"}}}}
 {{"tool": "act", "args": {{"device": "name", "action": "files.find", "args": {{...}}, "reason": "one line why"}}}}
 {{"tool": "phone", "args": {{"kind": "alarm|reminder|open_app|call|sms|file", "...": "alarm: hour, minute, label; reminder: at (ISO local), text; open_app: app, package?; call: number, name?; sms: number, text, name?; file: path on the hub", "reason": "one line why"}}}}
-{{"tool": "build", "args": {{"name": "the app's name", "spec": "what to build or change", "repo": "git folder on the hub's machine (not needed when continuing)", "continue": false, "agent": "optional: claude|codex", "device": "optional device name"}}}}
+{{"tool": "build", "args": {{"name": "a short name", "spec": "what to make or change", "kind": "app|slides|video", "continue": false, "agent": "optional: claude|codex", "device": "optional device name"}}}}
 {{"answer": "your reply to him"}}
 
 RULES
@@ -68,8 +74,10 @@ RULES
 - Something is done only when its RESULT says OK. PENDING means waiting for his Approve on the phone: say exactly that. REFUSED or FAILED: say so plainly.
 - There is no delete action, and you cannot send messages (WhatsApp, email, SMS) to anyone: say so, and offer what you can (a draft, a list of what to delete).
 - Never handle passwords.
-- `phone` puts something on his phone's Phone screen; it happens only when he taps Do it. A call or text only opens the dialer or the message filled in; he presses call or send. Say it is WAITING on his phone.
-- `build` makes or changes an app on its own git branch (coding agent, tests, a second model's review); it never touches main. "Continue the X app" = `build` with "continue": true. It takes a while: say it has STARTED and that he gets a notice with a preview to check and Merge on the phone. You cannot merge.
+- "Open X": on a computer use `act` with apps.open and the program's name; it runs at once. On his phone use `phone` with kind open_app (add `package` if you know it). If he names no device, use the one he is talking from: the phone for a spoken request or the Assistant tab. Other `phone` kinds happen only when he taps Do it. A call or text only opens the dialer or the message filled in; he presses call or send.
+- "Create a presentation, a video or an app" = `build` with the right kind and no repo: it chooses the best model and device, makes a private git repo, builds on a branch and runs the audits in his build guidelines. "Continue the X app" = `build` with "continue": true. It takes a while: say it has STARTED and that he gets a notice to check it. You cannot merge. You may only work in projects you created; his own repos need him to start the build from the Builds screen.
+- You can remove things only with `act` files.trash, only inside projects you created. It keeps a copy that files.restore brings back. Everything you do on a device is logged with your name.
+- Use what you know about him and his day: talk the way someone who knows him would, and connect what he asks to what is going on today. Never invent personal details, and never recite this section back at him.
 - `add_task` due_at is his LOCAL time, e.g. 2026-11-02T17:00 for 5 pm. Work dates out from "Now" above.
 - "Remind me to …" is a task: `add_task` with its due time (that is what reminds him). Use `phone` alarm/reminder only when he asks for one on his phone.
 - When he tells you something worth keeping (a preference, a decision, a fact, a date), save it with `remember`.
@@ -220,6 +228,27 @@ def _open_tasks(session: Session) -> str:
     return (f"Today is {today.strftime('%a %d %b')}.\n" + "\n".join(out)) if out else "No open tasks."
 
 
+def _tagged(session: Session, tag: str, limit: int, since: Optional[datetime] = None) -> list[MemoryRecord]:
+    """Newest records carrying this tag. Tags are stored comma-separated, so the whole word is checked."""
+    q = select(MemoryRecord).where(MemoryRecord.deleted == False, MemoryRecord.tags.contains(tag))  # noqa: E712  # type: ignore[attr-defined]
+    if since:
+        q = q.where(MemoryRecord.updated_at >= since)
+    rows = session.exec(q.order_by(MemoryRecord.updated_at.desc()).limit(limit * 3)).all()  # type: ignore[attr-defined]
+    return [r for r in rows if tag in [t.strip() for t in str(r.tags).split(",")]][:limit]
+
+
+def _about_him(session: Session) -> str:
+    """What recorded conversations and his own messages show about him (shared memory, tag about-me)."""
+    return "\n".join(f"- {r.body[:300]}" for r in _tagged(session, "about-me", 25)) or "(nothing yet)"
+
+
+def _his_day(session: Session) -> str:
+    """Today's recorded conversations and tasks, so a request can be read against what is going on."""
+    since = datetime.now(timezone.utc) - timedelta(hours=18)
+    talks = [f"- {r.body[:600]}" for r in _tagged(session, "conversation", 6, since) if r.kind == "note"]
+    return "\n".join([*talks, _open_tasks(session)]) if talks else _open_tasks(session)
+
+
 async def run_tool(name: str, args: dict, hub: Hub, used: list[dict]) -> str:
     with Session(engine) as session:
         if name == "memory_search":
@@ -266,7 +295,7 @@ async def run_tool(name: str, args: dict, hub: Hub, used: list[dict]) -> str:
             return f"Added task #{t.id}."
     if name == "act":
         body = {"node": args.get("device") or None, "action": args.get("action"), "args": args.get("args") or {},
-                "reason": args.get("reason")}
+                "reason": args.get("reason"), "who": "brain"}
         try:
             res = await hub.post("/api/act", body)
         except Exception as e:  # noqa: BLE001
@@ -290,12 +319,15 @@ async def run_tool(name: str, args: dict, hub: Hub, used: list[dict]) -> str:
         except Exception as e:  # noqa: BLE001
             return f"The hub could not reach the phone list: {e}"
         used.append({"device": "phone", "action": f"phone.{body.get('kind')}", "status": "pending"})
+        if body.get("kind") == "open_app":
+            return f"SENT to his phone: {p.get('summary')}. It opens by itself when remote control is on or the app is on screen; otherwise he gets a notice to tap."
         return f"WAITING on his phone: {p.get('summary')}. It has NOT happened yet; he taps Do it on the Phone screen."
     if name == "build":
         body = {k: v for k, v in {
             "name": str(args.get("name") or "").strip(), "spec": str(args.get("spec") or "").strip(),
             "repo": args.get("repo") or None, "node": args.get("device") or None,
             "agent": args.get("agent") or None, "continue": bool(args.get("continue")),
+            "kind": args.get("kind") if args.get("kind") in ("app", "slides", "video") else None, "by": "brain",
         }.items() if v is not None}
         if not body["name"] or not body["spec"]:
             return "A build needs the app's name and what to build (spec)."
@@ -307,8 +339,8 @@ async def run_tool(name: str, args: dict, hub: Hub, used: list[dict]) -> str:
         except Exception as e:  # noqa: BLE001
             return f"The hub could not start the build: {e}"
         used.append({"device": b.get("node") or "any", "action": "build", "status": "started"})
-        return (f"STARTED build {b.get('id')} of {b.get('name')} in {b.get('repo')} ({b.get('agent')} codes, "
-                f"{b.get('reviewer')} reviews). It is NOT finished: he gets a notice to check the preview and Merge.")
+        return (f"STARTED build {b.get('id')} of {b.get('name')} in {b.get('repo') or 'a cloud agent'} ({b.get('agent')} makes it, "
+                f"{b.get('reviewer')} reviews). It is NOT finished: he gets a notice to check it.")
     return f"Unknown tool {name!r}. Use one of: {', '.join(TOOLS)}, or answer with {{\"answer\": ...}}."
 
 
@@ -353,9 +385,10 @@ async def ask(text: str, *, source: str = "app", llm: Optional[LLM] = None,
         # a follow-up ("and the other one?") recalls with the previous question too
         prev = " ".join(h.get("content", "") for h in (history or [])[-2:] if h.get("role") == "user")
         recall = memory.as_prompt(memory.search(session, f"{prev} {text}".strip(), limit=6), 2500) or "(nothing yet)"
+        about, day = _about_him(session), _his_day(session)
     tz = ZoneInfo(settings.tz)
     system = SYSTEM.format(owner=settings.owner_name, now=datetime.now(tz).strftime("%a %d %b %Y %H:%M"), tz=settings.tz,
-                           profile=profile, recall=recall, devices=await _devices(hub), actions=await _actions(hub),
+                           profile=profile, about=about, day=day, recall=recall, devices=await _devices(hub), actions=await _actions(hub),
                            steps=settings.agent_max_steps,
                            device_notes=("What the devices are: " + settings.agent_device_notes + "\n") if settings.agent_device_notes else "")
     if source == "voice":

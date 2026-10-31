@@ -66,13 +66,17 @@ class TaskCreate(BaseModel):
     details: Optional[str] = None
     due_at: Optional[datetime] = None
     priority: str = "normal"
+    # Found by something else (a recorded conversation): waits for his Keep or Not a task.
+    unconfirmed: bool = False
 
     _utc = field_validator("due_at")(_due_utc)
 
 
 @router.post("", response_model=TaskOut, status_code=201)
 def create_task(body: TaskCreate, session: Session = Depends(get_session)):
-    t = Task(**body.model_dump(), status=TaskStatus.open, confidence=1.0, notified=True)
+    fields = body.model_dump(exclude={"unconfirmed"})
+    status = TaskStatus.pending_confirmation if body.unconfirmed else TaskStatus.open
+    t = Task(**fields, status=status, confidence=0.6 if body.unconfirmed else 1.0, notified=True)
     session.add(t)
     session.commit()
     session.refresh(t)
