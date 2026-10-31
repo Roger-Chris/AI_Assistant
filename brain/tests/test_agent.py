@@ -89,6 +89,17 @@ def hub(monkeypatch):
             if body.get("kind") == "teleport":
                 return httpx.Response(400, json={"error": "not a phone action: kind: Invalid input"})
             return httpx.Response(200, json={"id": "p1", "summary": "Set an alarm for 06:30", "status": "pending"})
+        if req.url.path == "/api/mail":
+            body = json.loads(req.content)
+            calls.append({"mail": body})
+            return httpx.Response(200, json={"id": "m1", "to": body["to"] if "@" in body["to"] else "", "subject": "Monday", "status": "draft"})
+        if req.url.path == "/api/shop":
+            body = json.loads(req.content)
+            calls.append({"shop": body})
+            if body["store"] == "ebay":
+                return httpx.Response(400, json={"error": "I don't shop on ebay yet."})
+            status = "link" if body["store"] == "amazon" else "working"
+            return httpx.Response(200, json={"id": "s1", "storeName": body["store"], "node": "omen", "status": status})
         if req.url.path == "/api/builds":
             body = json.loads(req.content)
             calls.append({"build": body})
@@ -284,6 +295,33 @@ async def test_build_starts_on_the_hub_and_is_reported_as_started(hub):
     assert "needs the app's name and what to build" in script.seen[3][-1]["content"]
     assert res["pending"] == []  # a started build is not waiting on an approval
     assert [st["tool"] for st in res["steps"]][:1] == ["build"]
+
+
+async def test_mail_is_only_ever_a_draft(hub):
+    script = Script([
+        {"tool": "mail", "args": {"to": "a@b.co", "about": "move the meeting to Monday"}},
+        {"tool": "mail", "args": {"to": "Varun", "about": "thanks"}},
+        {"answer": "Both drafts wait on your phone."},
+    ])
+    await agent.ask("mail them", llm=script)
+    assert hub[0] == {"mail": {"to": "a@b.co", "about": "move the meeting to Monday", "by": "brain"}}
+    assert "DRAFTED, NOT SENT" in script.seen[1][-1]["content"]
+    assert "no address yet" in script.seen[2][-1]["content"]
+    assert not any("send" in str(c) for c in hub)
+
+
+async def test_shop_starts_and_never_claims_an_order(hub):
+    script = Script([
+        {"tool": "shop", "args": {"store": "flipkart", "request": "a pen"}},
+        {"tool": "shop", "args": {"store": "amazon", "request": "a pen"}},
+        {"tool": "shop", "args": {"store": "ebay", "request": "a pen"}},
+        {"answer": "Started; check your phone."},
+    ])
+    await agent.ask("add a pen to my cart", llm=script)
+    assert hub[0] == {"shop": {"store": "flipkart", "request": "a pen", "by": "brain"}}
+    assert "NOT filled yet and nothing is ordered" in script.seen[1][-1]["content"]
+    assert "LINK ONLY" in script.seen[2][-1]["content"]
+    assert "don't shop on ebay" in script.seen[3][-1]["content"]
 
 
 async def test_phone_actions_wait_for_his_tap(hub):

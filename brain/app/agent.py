@@ -68,6 +68,8 @@ approval rules of the program you run in; never say a tool here is unavailable, 
 {{"tool": "act", "args": {{"device": "name", "action": "files.find", "args": {{...}}, "reason": "one line why"}}}}
 {{"tool": "phone", "args": {{"kind": "alarm|reminder|open_app|call|sms|file", "...": "alarm: hour, minute, label; reminder: at (ISO local), text; open_app: app, package?; call: number, name?; sms: number, text, name?; file: path on the hub", "reason": "one line why"}}}}
 {{"tool": "build", "args": {{"name": "a short name", "spec": "what to make or change", "kind": "app|slides|video", "continue": false, "agent": "optional: claude|codex", "device": "optional device name"}}}}
+{{"tool": "mail", "args": {{"to": "an email address, or a name if you have no address", "about": "what the mail should say, in his words", "subject": "optional", "name": "optional: who it is for"}}}}
+{{"tool": "shop", "args": {{"store": "amazon|flipkart|instamart|swiggy|zomato|blinkit|zepto", "request": "what to find, with quantity"}}}}
 {{"answer": "your reply to him"}}
 
 RULES
@@ -76,7 +78,9 @@ RULES
 - Prefer safe actions. Use an `ask` action only when he asked for that change; give a clear one-line reason.
 - Something is done only when its RESULT says OK. PENDING means waiting for his Approve on the phone: say exactly that. REFUSED or FAILED: say so plainly.
 - There is no delete action, and you cannot send messages (WhatsApp, email, SMS) to anyone: say so, and offer what you can (a draft, a list of what to delete).
-- Never handle passwords.
+- "Write or send a mail": use `mail`, looking up the address in memory first. It only writes a draft; he checks it and taps Send on the phone. Never say a mail was sent.
+- "Add to my cart" or "order X": use `shop` and ask which store if he named none. It fills a cart and tells his phone the items and total. You cannot place an order or pay: he does that himself in the store, after tapping Go to checkout. Never say something was ordered.
+- Never handle passwords, card numbers, CVVs, UPI ids or OTPs: if he offers one, tell him not to share it and to enter it in the store himself.
 - "Open X": on a computer use `act` with apps.open and the program's name; it runs at once. On his phone use `phone` with kind open_app (add `package` if you know it). If he names no device, use the one he is talking from: the phone for a spoken request or the Assistant tab. Other `phone` kinds happen only when he taps Do it. A call or text only opens the dialer or the message filled in; he presses call or send.
 - "Create a presentation, a video or an app" = `build` with the right kind and no repo: it chooses the best model and device, makes a private git repo, builds on a branch and runs the audits in his build guidelines. "Continue the X app" = `build` with "continue": true. It takes a while: say it has STARTED and that he gets a notice to check it. You cannot merge. You may only work in projects you created; his own repos need him to start the build from the Builds screen.
 - You can remove things only with `act` files.trash, only inside projects you created. It keeps a copy that files.restore brings back. Everything you do on a device is logged with your name.
@@ -89,7 +93,7 @@ RULES
 
 # ---------------------------------------------------------------- reading the model's move
 
-TOOLS = ("memory_search", "memory_about", "remember", "tasks", "add_task", "task_done", "act", "build", "phone")
+TOOLS = ("memory_search", "memory_about", "remember", "tasks", "add_task", "task_done", "act", "build", "phone", "mail", "shop")
 # Names models reach for instead of ours. Mapped silently; anything else gets the list back.
 ALIASES = {
     "search_memory": "memory_search", "memory.search": "memory_search", "search": "memory_search",
@@ -348,6 +352,32 @@ async def run_tool(name: str, args: dict, hub: Hub, used: list[dict]) -> str:
         if body.get("kind") == "open_app":
             return f"SENT to his phone: {p.get('summary')}. It opens by itself when remote control is on or the app is on screen; otherwise he gets a notice to tap."
         return f"WAITING on his phone: {p.get('summary')}. It has NOT happened yet; he taps Do it on the Phone screen."
+    if name == "mail":
+        body = {k: args.get(k) for k in ("to", "about", "subject", "name") if args.get(k)}
+        try:
+            m = await hub.post("/api/mail", {**body, "by": "brain"}, timeout=150)
+        except httpx.HTTPStatusError as e:
+            detail = e.response.json().get("error", "") if e.response.headers.get("content-type", "").startswith("application/json") else ""
+            return f"The hub would not write it: {detail or e}"
+        except Exception as e:  # noqa: BLE001
+            return f"The hub could not write the mail: {e}"
+        used.append({"device": "phone", "action": "mail.draft", "status": "pending"})
+        missing = "" if m.get("to") else " It has no address yet: he fills that in."
+        return f"DRAFTED, NOT SENT: \"{m.get('subject')}\". It waits on his phone for him to check it and tap Send.{missing}"
+    if name == "shop":
+        body = {"store": args.get("store"), "request": args.get("request"), "by": "brain"}
+        try:
+            s = await hub.post("/api/shop", body, timeout=30)
+        except httpx.HTTPStatusError as e:
+            detail = e.response.json().get("error", "") if e.response.headers.get("content-type", "").startswith("application/json") else ""
+            return f"The hub would not start it: {detail or e}"
+        except Exception as e:  # noqa: BLE001
+            return f"The hub could not start the shopping: {e}"
+        used.append({"device": s.get("node") or "hub", "action": "shop", "status": s.get("status")})
+        if s.get("status") == "link":
+            return f"LINK ONLY: {s.get('storeName')} is not driven by the agent. A search link waits on his phone; nothing is in a cart."
+        return (f"STARTED on {s.get('storeName')}. The cart is NOT filled yet and nothing is ordered: "
+                "his phone gets the items and total in a few minutes, and he orders in the store himself.")
     if name == "build":
         body = {k: v for k, v in {
             "name": str(args.get("name") or "").strip(), "spec": str(args.get("spec") or "").strip(),
