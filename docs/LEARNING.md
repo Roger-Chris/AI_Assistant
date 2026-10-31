@@ -12,7 +12,9 @@ Settings -> Learning and the 👍 / 👎 under every answer.
     │
     ▼  nightly (LEARN_HOUR, 03:40)
  settle   lessons thumbed down ≥ 2 times (and more than up) turn off
- reflect  a model reads the episodes with a signal -> lessons + regression cases
+ review   a model scores answers nobody judged: 8+ become examples, 5 or less go on to reflect
+ reflect  a model reads the episodes with a signal or a weak review -> lessons + regression cases
+ practice past requests replayed in the sandbox with what was learnt; a model coaches the tries -> scores + lessons
  gate     agent_eval with the lessons on trial: worse than the last good run -> roll back, else promote
 ```
 
@@ -35,6 +37,31 @@ Settings -> Learning and the 👍 / 👎 under every answer.
 - **off**: you turned it off, it kept getting 👎, or the evaluation rolled it back. The note says which.
 
 The same lesson said or found again reinforces the existing one (word overlap ≥ 0.6) instead of adding a copy.
+
+## Growing without feedback
+
+The model is never retrained. What grows is what it is given and how that was tested:
+
+- **Signals by themselves:** the same thing asked again within 10 minutes, the step limit, a tool that failed. Hints only: they count against no lesson.
+- **Examples:** answers you liked, or that scored 8+, are shown (tool names and the start of the answer) when a similar request comes. A 👎 or a retry takes one back.
+- **Practice:** up to `LEARN_PRACTICE_DRILLS` past requests a night, weak spots first. A passed one waits 2, 4, 8… days; one that went badly comes back tomorrow. Requests you marked good are left alone, and any touching passwords, payments and the like are never replayed. It runs in `agent_eval`'s sandbox: fake devices, canned answers from mail, shop, phone and builds, a throwaway database that is deleted afterwards. Nothing real happens. The memory that request would call up is copied in, so it isn't blind.
+- **Lessons by record:** wins and losses move a lesson's confidence and its place among the 8 in the prompt.
+
+Where a lesson can come from decides how far it gets by itself:
+
+| Found by | On trial by itself | Waits for you |
+|---|---|---|
+| Your signal | preference, fact, voice (confidence ≥ 0.7) | skill, rule |
+| Its own review | preference, voice (confidence capped at 0.75) | fact, skill, rule |
+| Practice | preference, voice, skill | rule; facts are dropped, since the sandbox's are made up |
+
+A lesson resting only on spoken requests waits for you too, since they may be misheard.
+
+**Your draft edits:** what you really sent against what the hub drafted, for mail and WhatsApp replies, comes here as an episode (`POST /learn/drafts`). Their message to you is never included, so nobody can steer a lesson by what they write. A `writing` lesson says how you write differently, waits in the app, and goes into use when a second edit shows the same habit, or when you tap Keep. The hub reads them from `GET /learn/writing`. The evaluation can't test these, so it leaves them alone.
+
+**The gate, one by one:** when a night's evaluation gets worse with several lessons on trial, up to 3 are run alone, without the other new ones. Each is kept or rolled back on its own result, and the rest stay on trial for the next night.
+
+Scores are one model's opinion of another's work, so the trend in Settings -> Learning is a guide, not proof. Your signal always outranks them.
 
 ## Safety
 

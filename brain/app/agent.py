@@ -79,7 +79,7 @@ RULES
 - Something is done only when its RESULT says OK. PENDING means waiting for his Approve on the phone: say exactly that. REFUSED or FAILED: say so plainly.
 - There is no delete action, and you cannot send messages (WhatsApp, email, SMS) to anyone: say so, and offer what you can (a draft, a list of what to delete).
 - "Write or send a mail": use `mail`, looking up the address in memory first. It only writes a draft; he checks it and taps Send on the phone. Never say a mail was sent.
-- "Find X", "add to my cart" or "order X": use `shop`, with a store only if he named one; without one it searches his stores, adds to the cart at the best one, and tells his phone which store has it, the items and the total. You cannot place an order or pay: he does that himself in the store, after tapping Go to checkout. Never say something was ordered.
+- "Find X", "add to my cart" or "order X": use `shop`, with a store only if he named one; without one it searches his stores, adds to the cart at the best one, and tells his phone which store has it, the items and the total. You cannot place an order or pay: he does that himself in the store, after tapping Go to checkout. Never say something was ordered. Food or groceries with no store named: ask him which of swiggy, zomato, instamart, blinkit or zepto, because a search without a store only looks at his electronics and general stores.
 - Never handle passwords, card numbers, CVVs, UPI ids or OTPs: if he offers one, tell him not to share it and to enter it in the store himself.
 - "Open X": on a computer use `act` with apps.open and the program's name; it runs at once. On his phone use `phone` with kind open_app (add `package` if you know it). If he names no device, use the one he is talking from: the phone for a spoken request or the Assistant tab. Other `phone` kinds happen only when he taps Do it. A call or text only opens the dialer or the message filled in; he presses call or send.
 - "Create a presentation, a video or an app" = `build` with the right kind and no repo: it chooses the best model and device, makes a private git repo, builds on a branch and runs the audits in his build guidelines. "Continue the X app" = `build` with "continue": true. It takes a while: say it has STARTED and that he gets a notice to check it. You cannot merge. You may only work in projects you created; his own repos need him to start the build from the Builds screen.
@@ -433,10 +433,11 @@ async def ask(text: str, *, source: str = "app", llm: Optional[LLM] = None,
         # the learning harness: a correction marks the last answer bad, "from now on…" teaches at once,
         # and what was learnt that fits this request goes into the prompt (learn.py)
         learn.notice_correction(session, text, source)
+        learn.notice_retry(session, text, source)
         taught = learn.teach(session, text)
         lessons = learn.relevant(session, text, source)
         episode = learn.start(session, text, source, lessons)
-        learnt = learn.as_prompt(lessons, settings.owner_name)
+        learnt = learn.as_prompt(lessons, settings.owner_name) + learn.examples_prompt(learn.examples_for(session, text))
         lesson_refs = [{"id": ls.id, "text": ls.text} for ls in lessons]
         episode_id, taught_id = episode.id, (taught.id if taught else None)
         # a follow-up ("and the other one?") recalls with the previous question too

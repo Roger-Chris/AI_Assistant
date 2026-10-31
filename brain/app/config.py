@@ -125,6 +125,9 @@ class Settings(BaseSettings):
     learn_eval_model: str = ""             # e.g. codex; empty = PLANNER_MODEL
     learn_eval_tolerance: float = 0.05     # pass-rate drop allowed before trial lessons are rolled back
     learn_eval_timeout_minutes: int = 40
+    learn_review_limit: int = 20           # answers the nightly self-review reads (one model call a night)
+    learn_practice_drills: int = 5         # past requests replayed in the sandbox each night; 0 turns practice off
+    learn_examples_in_prompt: int = 2      # past answers that went well, shown when a similar request comes
 
 
 settings = Settings()

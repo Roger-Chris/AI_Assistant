@@ -26,9 +26,11 @@ os.environ["MEMORY_MIRROR_MINUTES"] = "0"
 
 import argparse  # noqa: E402
 import asyncio  # noqa: E402
+import atexit  # noqa: E402
 import dataclasses  # noqa: E402
 import json  # noqa: E402
 import re  # noqa: E402
+import shutil  # noqa: E402
 import time  # noqa: E402
 from dataclasses import dataclass, field  # noqa: E402
 from datetime import datetime, timedelta, timezone  # noqa: E402
@@ -41,7 +43,7 @@ from sqlmodel import Session, select  # noqa: E402
 
 from . import agent, memory  # noqa: E402
 from .config import settings  # noqa: E402
-from .db import Entity, Lesson, MemoryRecord, Task, TaskKind, TaskStatus, engine, init_db  # noqa: E402
+from .db import Entity, Episode, Lesson, MemoryRecord, Task, TaskKind, TaskStatus, engine, init_db  # noqa: E402
 from .llm import HUB_MODELS, LLM, _split, planner_profile  # noqa: E402
 
 # ---------------------------------------------------------------- the fake hub
@@ -99,6 +101,13 @@ class Hub:
                                                  "approval": {"id": "eval", "summary": f"{action} {json.dumps(args)[:120]}"}})
             out = self.results.get(action, f"(no canned result for {action})")
             return httpx.Response(200, json={"status": "done", "node": node, "action": action, "result": {"ok": True, "output": out}})
+        # The tools that start something on the phone or a device: answered as if they worked, and nothing starts.
+        canned = {"/api/shop": {"id": "eval", "status": "working", "storeName": "a store", "node": "linux-hub"},
+                  "/api/mail": {"id": "eval", "subject": "(practice)", "to": "x@example.com"},
+                  "/api/phone/actions": {"id": "eval", "status": "pending"},
+                  "/api/builds": {"id": "eval", "status": "running", "name": "(practice)"}}
+        if req.method == "POST" and req.url.path in canned:
+            return httpx.Response(200, json=canned[req.url.path])
         return httpx.Response(404)
 
 
@@ -282,9 +291,13 @@ def learned_cases(raw: list[dict]) -> list[Case]:
     return [c for c in out if c.request]
 
 
-def load_lessons(raw: list[dict]) -> None:
-    """The lessons being evaluated, into the throwaway database, so agent.ask puts them in its prompt."""
+def load_lessons(raw: list[dict], examples: Optional[list[dict]] = None) -> None:
+    """The lessons being evaluated, and the examples that go well, into the throwaway database, so
+    agent.ask puts them in its prompt."""
     with Session(engine) as s:
+        for e in examples or []:
+            s.add(Episode(source="app", request=str(e.get("request") or ""), answer=str(e.get("answer") or ""),
+                          tools=str(e.get("tools") or ""), example=True, reflected=True))
         for ls in raw:
             s.add(Lesson(kind=str(ls.get("kind") or "preference"), text=str(ls.get("text") or ""),
                          when=str(ls.get("when") or ""), status=str(ls.get("status") or "active"),
@@ -330,6 +343,7 @@ async def run(cases: list[Case], llm: LLM, repeat: int) -> list[dict]:
 
 
 def main() -> None:
+    atexit.register(shutil.rmtree, _TMP, ignore_errors=True)  # it may hold real memory, for practice
     ap = argparse.ArgumentParser(description="Evaluate the thinking loop against the real model (fake devices, throwaway database).")
     ap.add_argument("--model", help="model name instead of PLANNER_MODEL (same keys and endpoint); codex, claude, "
                     "gemini or groq think through the hub's logged-in sessions (codex = your ChatGPT account)")
@@ -362,7 +376,7 @@ def main() -> None:
     settings.agent_device_notes = ("omen = the HP Omen laptop (Windows, RTX 5050); linux-hub = the always-on Linux "
                                    "machine; mac-mini = the Mac mini")
     init_db()
-    load_lessons(learned.get("lessons") or [])
+    load_lessons(learned.get("lessons") or [], learned.get("examples"))
     if not prof.api_keys:  # the planner shares the classifier's keys when it has none of its own
         prof = dataclasses.replace(prof, api_keys=_split(settings.classifier_api_keys) or _split(settings.classifier_api_key))
     if args.model and args.model not in HUB_MODELS:

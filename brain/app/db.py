@@ -195,6 +195,12 @@ class Episode(SQLModel, table=True):
     feedback: str = ""  # the owner's correction or note
     signals: str = ""  # JSON list: thumbs, correction, denied, …
     reflected: bool = Field(default=False, index=True)
+    self_score: Optional[float] = None  # the nightly self-review, 0-10; the owner's own signal always outranks it
+    self_note: str = ""  # what the review thought could be sharper
+    example: bool = Field(default=False, index=True)  # went well: shown when a similar request comes
+    practiced: int = 0  # times replayed in the practice sandbox
+    practice_score: Optional[float] = None  # how the last replay went, 0-10
+    practiced_at: Optional[datetime] = None
 
 
 class Lesson(SQLModel, table=True):

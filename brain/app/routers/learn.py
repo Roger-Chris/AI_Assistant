@@ -21,6 +21,27 @@ class Feedback(BaseModel):
     signal: str = ""  # thumbs_up | thumbs_down | denied | …
 
 
+class DraftOutcome(BaseModel):
+    kind: str
+    about: str = ""
+    draft: str
+    sent: str
+
+
+@router.post("/drafts")
+def draft_outcome(body: DraftOutcome, session: Session = Depends(get_session)) -> dict:
+    """The hub: what the owner really sent against what it drafted."""
+    if body.kind not in learn.DRAFT_SOURCES:
+        raise HTTPException(400, f"kind must be one of {', '.join(learn.DRAFT_SOURCES)}")
+    return {"id": learn.draft_outcome(session, body.kind, body.about, body.draft, body.sent).id}
+
+
+@router.get("/writing")
+def writing(kind: str, session: Session = Depends(get_session)) -> dict:
+    """The hub's writers: how to write this kind of draft."""
+    return {"lessons": learn.writing_for(session, kind)}
+
+
 @router.get("/status")
 def status(session: Session = Depends(get_session)) -> dict:
     return learn.status(session)
