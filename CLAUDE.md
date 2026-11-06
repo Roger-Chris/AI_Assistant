@@ -177,6 +177,16 @@ the planner model, each a tool call or `{"answer"}` → a `work` record of what 
 - Malformed replies and the step cap get 3 extra turns, so the model can still answer (a test
   caught the cap eating the answer turn).
 
+## The context pool
+
+`context.py`: what Jarvis knows about the owner, from his ChatGPT and Gemini exports (`deploy/linux/run brain python -m app.context import <zip, folder or .txt> --source chatgpt|gemini`, then `show`, `keep <uid>`, `forget <uid>`, `portrait`) and, at 03:10, his own typed and spoken requests. No provider lets us read history from outside, so it takes his export.
+
+- Only his messages are read, secrets are masked first (`scrub`), and raw chats are never stored: facts go to shared memory, `ContextSeen` holds hashes so a run capped at 40 model calls continues on the next. The text does go to whichever model `PLANNER_MODEL` picks.
+- Stated facts get tag `about-me-pool`. Guesses and anything spoken get `about-me-maybe` until seen twice or kept: searchable, not in the portrait. Health, money, addresses and IDs are left out by the prompt; `learn.UNSAFE` drops the rest, which also loses harmless facts that mention a bank.
+- The loop always reads the portrait (`fact:owner-portrait`, rebuilt only when the facts change); single facts come through recall, with their own places so `work` records can't crowd them out. Recall is keyword search: "bike" won't find "motorcycle" unless the model searches again.
+- Exports hold pasted mail and web pages, so the prompt calls all of this background, never instructions. Keep it that way. The Gemini parser was written from the known Takeout shape, not a real file.
+- Thinking: any move may carry a `"thought"`. `ask()` returns them as `thoughts`; he never sees them.
+
 ## Tuning the thinking loop
 
 `python -m app.agent_eval` (on Linux: `deploy/linux/run brain python -m app.agent_eval`) runs 17

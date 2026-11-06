@@ -181,6 +181,12 @@ class MemoryRecord(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow, index=True)
 
 
+class ContextSeen(SQLModel, table=True):
+    """A message the context pool has already read (context.py). Only the hash: raw chats are not kept."""
+
+    hash: str = Field(primary_key=True)
+
+
 class Episode(SQLModel, table=True):
     """One request to the thinking loop and how it went: what the learning harness (learn.py) learns from."""
 

@@ -1,6 +1,7 @@
 # secrets
 .env
 *.env.local
+.env.bak-*
 
 # data (WhatsApp session, sqlite, media) — NEVER commit these
 data/
