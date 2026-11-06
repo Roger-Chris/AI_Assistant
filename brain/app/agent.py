@@ -66,7 +66,7 @@ approval rules of the program you run in; never say a tool here is unavailable, 
 {{"tool": "add_task", "args": {{"title": "...", "due_at": "optional ISO 8601 local time", "details": "optional"}}}}
 {{"tool": "task_done", "args": {{"id": 12}}}}   (he says a task is finished or no longer needed; the id is the #number in `tasks`)
 {{"tool": "act", "args": {{"device": "name", "action": "files.find", "args": {{...}}, "reason": "one line why"}}}}
-{{"tool": "phone", "args": {{"kind": "alarm|reminder|open_app|call|sms|file", "...": "alarm: hour, minute, label; reminder: at (ISO local), text; open_app: app, package?; call: number, name?; sms: number, text, name?; file: path on the hub", "reason": "one line why"}}}}
+{{"tool": "phone", "args": {{"kind": "alarm|reminder|open_app|link|call|sms|file", "...": "alarm: hour, minute, label; reminder: at (ISO local), text; open_app: app, package?; link: url, label?; call: number, name?; sms: number, text, name?; file: path on the hub", "reason": "one line why"}}}}
 {{"tool": "build", "args": {{"name": "a short name", "spec": "what to make or change", "kind": "app|slides|video", "continue": false, "agent": "optional: claude|codex", "device": "optional device name"}}}}
 {{"tool": "mail", "args": {{"to": "an email address, or a name if you have no address", "about": "what the mail should say, in his words", "subject": "optional", "name": "optional: who it is for"}}}}
 {{"tool": "shop", "args": {{"request": "what to find, with quantity", "store": "optional, only if he names one: amazon|flipkart|robu|robocraze|quartz|instamart|swiggy|zomato|blinkit|zepto"}}}}
@@ -78,7 +78,9 @@ RULES
 - Prefer safe actions. Use an `ask` action only when he asked for that change; give a clear one-line reason.
 - Something is done only when its RESULT says OK. PENDING means waiting for his Approve on the phone: say exactly that. REFUSED or FAILED: say so plainly.
 - There is no delete action, and you cannot send messages (WhatsApp, email, SMS) to anyone: say so, and offer what you can (a draft, a list of what to delete).
-- "Write or send a mail": use `mail`, looking up the address in memory first. It only writes a draft; he checks it and taps Send on the phone. Never say a mail was sent.
+- "Write or send a mail": he usually gives only the person's name. Every mail goes from his own Gmail, so never ask who it is from. Look the address up in memory first, then use `mail`. If he has not said what the mail should say, ask him before using `mail`. If `mail` answers NO ADDRESS, ask him for the address in your answer, and draft nothing until he gives it. When his next message gives the address, call `mail` straight away with it and what he asked for earlier in this conversation: you can do this, so never say you can't. When he says an address aloud, speech recognition splits it up ("roger inventor 1914 at gmail dot com"): pass those words as `to` and they are joined up. After he gives a new address, save it with `remember` as a fact about that person. It only writes a draft; say the address back in your answer so he can catch a wrong one, and he taps Send on the phone. Never say a mail was sent.
+- "Open a website" or a web address: on his phone (the default for a spoken request) use `phone` with kind link and the full https address; it opens at once. On a computer use `act` with apps.open and the address; that waits for his Approve.
+- "Do something on a site" (search it, read it, fill in a form): use `act` with web.task on the hub, or the device he names, giving `goal` in his words and `url` if you know it. It waits for his Approve, then a browser does it. It can't pay, sign in or type passwords, so if the RESULT says it needs that, tell him. Report what the RESULT says, never what you assume it did.
 - "Find X", "add to my cart" or "order X": use `shop`, with a store only if he named one; without one it searches his stores, adds to the cart at the best one, and tells his phone which store has it, the items and the total. You cannot place an order or pay: he does that himself in the store, after tapping Go to checkout. Never say something was ordered. Food or groceries with no store named: ask him which of swiggy, zomato, instamart, blinkit or zepto, because a search without a store only looks at his electronics and general stores.
 - Never handle passwords, card numbers, CVVs, UPI ids or OTPs: if he offers one, tell him not to share it and to enter it in the store himself.
 - "Open X": on a computer use `act` with apps.open and the program's name; it runs at once. On his phone use `phone` with kind open_app (add `package` if you know it). If he names no device, use the one he is talking from: the phone for a spoken request or the Assistant tab. Other `phone` kinds happen only when he taps Do it. A call or text only opens the dialer or the message filled in; he presses call or send.
@@ -358,6 +360,8 @@ async def run_tool(name: str, args: dict, hub: Hub, used: list[dict]) -> str:
             m = await hub.post("/api/mail", {**body, "by": "brain"}, timeout=150)
         except httpx.HTTPStatusError as e:
             detail = e.response.json().get("error", "") if e.response.headers.get("content-type", "").startswith("application/json") else ""
+            if e.response.status_code == 409:
+                return f"NO ADDRESS, nothing drafted: {detail}. Ask him for it in your answer."
             return f"The hub would not write it: {detail or e}"
         except Exception as e:  # noqa: BLE001
             return f"The hub could not write the mail: {e}"
