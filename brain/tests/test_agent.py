@@ -100,6 +100,12 @@ def hub(monkeypatch):
                 return httpx.Response(400, json={"error": "I don't shop on ebay yet."})
             status = "link" if body.get("store") == "amazon" else "working"
             return httpx.Response(200, json={"id": "s1", "storeName": body.get("store", "5 stores"), "node": "omen", "status": status})
+        if req.url.path == "/api/tryouts":
+            body = json.loads(req.content)
+            calls.append({"tryout": body})
+            if body["source"] == "/nowhere":
+                return httpx.Response(404, json={"error": "not found on the hub: /nowhere"})
+            return httpx.Response(202, json={"id": "t1", "name": "todo-app", "status": "queued"})
         if req.url.path == "/api/builds":
             body = json.loads(req.content)
             calls.append({"build": body})
@@ -295,6 +301,21 @@ async def test_build_starts_on_the_hub_and_is_reported_as_started(hub):
     assert "needs the app's name and what to build" in script.seen[3][-1]["content"]
     assert res["pending"] == []  # a started build is not waiting on an approval
     assert [st["tool"] for st in res["steps"]][:1] == ["build"]
+
+
+async def test_tryout_starts_on_the_hub_and_the_video_comes_later(hub):
+    script = Script([
+        {"tool": "tryout", "args": {"source": "https://github.com/o/todo-app", "goal": "add a task"}},
+        {"tool": "tryout", "args": {"url": "/nowhere"}},
+        {"tool": "tryout", "args": {}},
+        {"answer": "Started; the video comes to your phone."},
+    ])
+    res = await agent.ask("try https://github.com/o/todo-app and show me adding a task", llm=script)
+    assert hub[0] == {"tryout": {"source": "https://github.com/o/todo-app", "goal": "add a task", "by": "brain"}}
+    assert "STARTED tryout t1" in script.seen[1][-1]["content"] and "NOT finished" in script.seen[1][-1]["content"]
+    assert "not found on the hub: /nowhere" in script.seen[2][-1]["content"]
+    assert "needs the project" in script.seen[3][-1]["content"]
+    assert res["pending"] == []
 
 
 async def test_mail_is_only_ever_a_draft(hub):
