@@ -69,7 +69,7 @@ approval rules of the program you run in; never say a tool here is unavailable, 
 {{"tool": "phone", "args": {{"kind": "alarm|reminder|open_app|link|call|sms|file", "...": "alarm: hour, minute, label; reminder: at (ISO local), text; open_app: app, package?; link: url, label?; call: number, name?; sms: number, text, name?; file: path on the hub", "reason": "one line why"}}}}
 {{"tool": "build", "args": {{"name": "a short name", "spec": "what to make or change", "kind": "app|slides|video", "continue": false, "agent": "optional: claude|codex", "device": "optional device name"}}}}
 {{"tool": "mail", "args": {{"to": "an email address, or a name if you have no address", "about": "what the mail should say, in his words", "subject": "optional", "name": "optional: who it is for"}}}}
-{{"tool": "tryout", "args": {{"source": "a git URL, a link to a file or archive, or a path on the hub", "goal": "optional: what he wants to see it do"}}}}
+{{"tool": "tryout", "args": {{"source": "a git URL, a link to a file or archive, or a path on the hub", "from": "or instead: who sent it on WhatsApp, as he said the name", "goal": "optional: what he wants to see it do"}}}}
 {{"tool": "shop", "args": {{"request": "what to find, with quantity", "store": "optional, only if he names one: amazon|flipkart|robu|robocraze|quartz|instamart|swiggy|zomato|blinkit|zepto"}}}}
 {{"answer": "your reply to him"}}
 
@@ -91,7 +91,7 @@ RULES
 - "Find X", "add to my cart" or "order X": use `shop`, with a store only if he named one; without one it searches his stores, adds to the cart at the best one, and tells his phone which store has it, the items and the total. You cannot place an order or pay: he does that himself in the store, after tapping Go to checkout. Never say something was ordered. Food or groceries with no store named: ask him which of swiggy, zomato, instamart, blinkit or zepto, because a search without a store only looks at his electronics and general stores.
 - Never handle passwords, card numbers, CVVs, UPI ids or OTPs: if he offers one, tell him not to share it and to enter it in the store himself.
 - "Open X": on a computer use `act` with apps.open and the program's name; it runs at once. On his phone use `phone` with kind open_app (add `package` if you know it). If he names no device, use the one he is talking from: the phone for a spoken request or the Assistant tab. Other `phone` kinds happen only when he taps Do it. A call or text only opens the dialer or the message filled in; he presses call or send.
-- "Try this", "run this project and show me" or "record it working" with a repo, link or file = `tryout`: the Linux hub downloads it, sets it up, runs it, uses it in a recorded browser or terminal and sends him the video. Pass the address or path exactly as he gave it, and what he wants to see as `goal`. It takes minutes: say it has STARTED and the video comes to his phone; never describe what the project does before the video arrives.
+- "Try this", "run this project and show me" or "record it working" with a repo, link or file = `tryout`: the Linux hub puts it in a new folder in Development, sets it up, runs it headless, uses it in a recorded browser or terminal and sends him the video. Pass the address or path exactly as he gave it, and what he wants to see as `goal`. "X sent me a zip (or a project) on WhatsApp, run it" = `tryout` with `from` set to the name exactly as he said it and no source: the hub finds the newest archive that person sent. If it answers that the file was never kept or the name could be two people, tell him exactly that. It takes minutes: say it has STARTED and the video comes to his phone; never describe what the project does before the video arrives.
 - "Create a presentation, a video or an app" = `build` with the right kind and no repo: it chooses the best model and device, makes a private git repo, builds on a branch and runs the audits in his build guidelines. "Continue the X app" = `build` with "continue": true. It takes a while: say it has STARTED and that he gets a notice to check it. You cannot merge. You may only work in projects you created; his own repos need him to start the build from the Builds screen.
 - You can remove things only with `act` files.trash, only inside projects you created. It keeps a copy that files.restore brings back. Everything you do on a device is logged with your name.
 - Use what you know about him and his day: talk the way someone who knows him would, and connect what he asks to what is going on today. Never invent personal details, and never recite this section back at him.
@@ -413,9 +413,11 @@ async def run_tool(name: str, args: dict, hub: Hub, used: list[dict]) -> str:
                 f"{b.get('reviewer')} reviews). {first}It is NOT finished: he gets a notice to check it.")
     if name == "tryout":
         source = str(args.get("source") or args.get("url") or args.get("repo") or args.get("path") or "").strip()
-        if not source:
-            return "A tryout needs the project: a git URL, a link to a file or archive, or a path on the hub. Ask him for it."
-        body = {"source": source, "by": "brain", **({"goal": str(args["goal"]).strip()} if str(args.get("goal") or "").strip() else {})}
+        sender = str(args.get("from") or args.get("sender") or args.get("who") or "").strip()
+        if not source and not sender:
+            return "A tryout needs the project: a git URL, a link to a file or archive, a path on the hub, or who sent it on WhatsApp. Ask him for it."
+        body = {**({"source": source} if source else {"from": sender}), "by": "brain",
+                **({"goal": str(args["goal"]).strip()} if str(args.get("goal") or "").strip() else {})}
         try:
             t = await hub.post("/api/tryouts", body, timeout=30)
         except httpx.HTTPStatusError as e:
@@ -424,7 +426,8 @@ async def run_tool(name: str, args: dict, hub: Hub, used: list[dict]) -> str:
         except Exception as e:  # noqa: BLE001
             return f"The hub could not start the tryout: {e}"
         used.append({"device": "hub", "action": "tryout", "status": "started"})
-        return (f"STARTED tryout {t.get('id')} of {t.get('name')}: the hub downloads it, sets it up, runs it and records it. "
+        came = f" ({t['from']})" if t.get("from") else ""
+        return (f"STARTED tryout {t.get('id')} of {t.get('name')}{came}: the hub puts it in a folder, sets it up, runs it and records it. "
                 "It is NOT finished: the video comes to his phone when it is done (usually 5 to 30 minutes).")
     return f"Unknown tool {name!r}. Use one of: {', '.join(TOOLS)}, or answer with {{\"answer\": ...}}."
 

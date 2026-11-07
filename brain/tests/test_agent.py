@@ -103,8 +103,12 @@ def hub(monkeypatch):
         if req.url.path == "/api/tryouts":
             body = json.loads(req.content)
             calls.append({"tryout": body})
-            if body["source"] == "/nowhere":
+            if body.get("source") == "/nowhere":
                 return httpx.Response(404, json={"error": "not found on the hub: /nowhere"})
+            if body.get("from") == "jitho san":
+                return httpx.Response(409, json={"error": 'Jitho san sent "game.zip" on 3 Nov, but the hub did not keep WhatsApp files back then.'})
+            if body.get("from"):
+                return httpx.Response(202, json={"id": "t2", "name": "Bday_wish", "from": "Kishaunjith on WhatsApp", "status": "queued"})
             return httpx.Response(202, json={"id": "t1", "name": "todo-app", "status": "queued"})
         if req.url.path == "/api/builds":
             body = json.loads(req.content)
@@ -316,6 +320,18 @@ async def test_tryout_starts_on_the_hub_and_the_video_comes_later(hub):
     assert "not found on the hub: /nowhere" in script.seen[2][-1]["content"]
     assert "needs the project" in script.seen[3][-1]["content"]
     assert res["pending"] == []
+
+
+async def test_tryout_finds_the_zip_someone_sent_on_whatsapp(hub):
+    script = Script([
+        {"tool": "tryout", "args": {"from": "Kishanujith", "goal": "open it"}},
+        {"tool": "tryout", "args": {"from": "jitho san"}},
+        {"answer": "Started Kishaunjith's zip; Jitho san's was never kept."},
+    ])
+    await agent.ask("kishanujith sent me a zip in whatsapp, run it", llm=script)
+    assert hub[0] == {"tryout": {"from": "Kishanujith", "goal": "open it", "by": "brain"}}
+    assert "STARTED tryout t2 of Bday_wish (Kishaunjith on WhatsApp)" in script.seen[1][-1]["content"]
+    assert "did not keep WhatsApp files" in script.seen[2][-1]["content"]
 
 
 async def test_mail_is_only_ever_a_draft(hub):
