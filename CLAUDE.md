@@ -170,7 +170,7 @@ Recall (memory search for the request, into the prompt) → up to `AGENT_MAX_STE
 the planner model, each a tool call or `{"answer"}` → a `work` record of what was asked and done.
 
 - Tools: `memory_search`, `memory_about`, `remember`, `tasks`, `add_task`, `act`, `build` (hub `POST /api/builds`: an app made or continued on its own branch; reported as STARTED, the owner checks the preview and merges in the app), `phone` (hub `POST /api/phone/actions`: an alarm, reminder, app to open, file, or a call/text to open filled in; reported as WAITING until he taps Do it on the phone) (the hub's
-  `/api/act`, so any device's actions). There is deliberately no tool that approves anything:
+  `/api/act`, so any device's actions), `tryout` (hub `POST /api/tryouts`: a git URL, link or hub path is downloaded, set up and run with full access, used in a recorded browser or terminal; the video goes to the phone; reported as STARTED). There is deliberately no tool that approves anything:
   risky actions come back `pending` and the loop must say they have NOT run.
 - JSON moves, not provider tool-calling: works on every OpenAI-compatible model with the same key
   rotation, and the tests script it (`tests/test_agent.py`, `Hub.transport` for the hub).
